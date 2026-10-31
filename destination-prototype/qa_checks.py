@@ -596,6 +596,152 @@ def check_scene_completeness(credits_path: Path, scene_count: int) -> QAResult:
     return QAResult("scene_completeness", True, f"All {len(credits)} scenes have approved images", "info")
 
 
+def check_asset_uniqueness(credits_path: Path) -> QAResult:
+    """Verify no duplicate assets across scenes (by digest or title)."""
+    if not credits_path.exists():
+        return QAResult("asset_uniqueness", False, "Credits file not found", "error")
+    with open(credits_path, encoding="utf-8") as f:
+        credits = json.load(f)
+    if not isinstance(credits, list):
+        return QAResult("asset_uniqueness", False, "Credits is not a list", "error")
+
+    seen_digests: Set[str] = set()
+    seen_titles: Set[str] = set()
+    duplicates = []
+    for c in credits:
+        provider = c.get("provider", "").lower()
+        if provider in ("map", "missing asset", "fallback text card", "procedural illustration"):
+            continue
+        digest = c.get("digest")
+        title = c.get("title", "").strip().lower()
+        if digest and digest in seen_digests:
+            duplicates.append(f"digest:{digest[:16]} ({c.get('scene', 'unknown')})")
+        elif title and title in seen_titles:
+            duplicates.append(f"title:{title[:60]} ({c.get('scene', 'unknown')})")
+        if digest:
+            seen_digests.add(digest)
+        if title:
+            seen_titles.add(title)
+
+    if duplicates:
+        return QAResult("asset_uniqueness", False,
+                        f"Duplicate assets across scenes: {', '.join(duplicates)}", "error")
+    return QAResult("asset_uniqueness", True, f"All {len(seen_digests)} assets are unique", "info")
+
+
+def check_asset_story_relevance(credits_path: Path, script_path: Path) -> QAResult:
+    """Verify scene assets are relevant to the selected story/region."""
+    if not credits_path.exists():
+        return QAResult("asset_story_relevance", False, "Credits file not found", "error")
+    if not script_path.exists():
+        return QAResult("asset_story_relevance", False, "Script file not found", "error")
+
+    with open(credits_path, encoding="utf-8") as f:
+        credits = json.load(f)
+    with open(script_path, encoding="utf-8") as f:
+        script = json.load(f)
+
+    if not isinstance(credits, list):
+        return QAResult("asset_story_relevance", False, "Credits is not a list", "error")
+
+    story_title = script.get("title", "").lower()
+    region = script.get("destination", "").lower()
+    theme = script.get("category", "").lower()
+
+    # Key terms from story
+    story_terms = set()
+    for term in [story_title, region, theme]:
+        if term:
+            story_terms.update(w for w in term.split() if len(w) > 3)
+
+    relevant = 0
+    total = 0
+    for c in credits:
+        provider = c.get("provider", "").lower()
+        if provider in ("map", "missing asset", "fallback text card", "procedural illustration"):
+            continue
+        total += 1
+        asset_title = c.get("title", "").lower()
+        asset_desc = c.get("description", "").lower()
+        asset_cats = " ".join(c.get("categories", [])).lower()
+        hay = " ".join([asset_title, asset_desc, asset_cats])
+        # Check if any story term appears in asset metadata
+        if any(term in hay for term in story_terms):
+            relevant += 1
+
+    if total == 0:
+        return QAResult("asset_story_relevance", True, "No non-map scenes to check", "info")
+    if relevant == 0:
+        return QAResult("asset_story_relevance", False,
+                        f"None of {total} scene assets relate to story/region '{story_title}'", "error")
+    ratio = relevant / total
+    if ratio < 0.5:
+        return QAResult("asset_story_relevance", False,
+                        f"Only {relevant}/{total} scene assets relate to story ({ratio:.0%})", "error")
+    return QAResult("asset_story_relevance", True,
+                    f"{relevant}/{total} scene assets relevant to story ({ratio:.0%})", "info")
+
+
+def check_narration_specificity(script_path: Path) -> QAResult:
+    """Verify narration is specific, not generic filler."""
+    with open(script_path, encoding="utf-8") as f:
+        script = json.load(f)
+
+    narration = script.get("narration", "")
+    if not narration:
+        return QAResult("narration_specificity", False, "No narration in script", "error")
+
+    narration_lower = narration.lower()
+    issues = []
+
+    # Generic filler phrases
+    generic_patterns = [
+        "this is the story of",
+        "the story of",
+        "surviving material shows",
+        "across generations",
+        "rich history waiting to be discovered",
+        "culture story",
+        "architecture story",
+        "landmark story",
+        "historical places",
+        "people story",
+    ]
+    for pattern in generic_patterns:
+        if pattern in narration_lower:
+            issues.append(f"generic filler: '{pattern}'")
+
+    # Check for specific entities (proper nouns, dates)
+    import re
+    specific_indicators = [
+        r'\b\d{4}\b',  # Years
+        r'\b[A-Z][a-z]+ [A-Z][a-z]+\b',  # Proper names
+    ]
+    has_specific = False
+    for pattern in specific_indicators:
+        if re.search(pattern, narration):
+            has_specific = True
+            break
+
+    if not has_specific:
+        issues.append("no specific entities (names, dates) found")
+
+    # Check for archive title patterns
+    archive_patterns = [
+        r'^\d{4}\.\s*[A-Z]',
+        r'[A-Z][a-z]+,\s*[A-Z]{2}\.\s*\d{4}',
+    ]
+    for pattern in archive_patterns:
+        if re.search(pattern, narration):
+            issues.append(f"archive title pattern detected")
+            break
+
+    if issues:
+        return QAResult("narration_specificity", False, f"Narration issues: {'; '.join(issues)}", "error")
+
+    return QAResult("narration_specificity", True, "Narration is specific and free of generic filler", "info")
+
+
 def check_research_status(script_path: Path) -> QAResult:
     """Report research status and verification ratio from the script record.
 
@@ -651,6 +797,7 @@ def run_review_qa(script_path: Path, output_dir: Optional[Path] = None,
     results.append(check_script_word_count(script_path))
     results.append(check_estimated_duration(script_path))
     results.append(check_research_status(script_path))
+    results.append(check_narration_specificity(script_path))
 
     if output_dir:
         board_path = output_dir / "approval-board.html"
@@ -658,6 +805,8 @@ def run_review_qa(script_path: Path, output_dir: Optional[Path] = None,
 
         credits_path = output_dir / "credits.json"
         results.append(check_credits(credits_path))
+        results.append(check_asset_uniqueness(credits_path))
+        results.append(check_asset_story_relevance(credits_path, script_path))
 
         # Scene completeness: every planned scene must have an approved image
         if scene_count is not None:
@@ -687,6 +836,7 @@ def run_production_qa(script_path: Path, output_dir: Path, video_path: Path,
     results.append(check_research_story_consistency(script_path))
     results.append(check_narrative_coherence(script_path))
     results.append(check_script_research_claim_refs(script_path))
+    results.append(check_narration_specificity(script_path))
 
     # Artifact checks
     board_path = output_dir / "approval-board.html"
@@ -695,6 +845,8 @@ def run_production_qa(script_path: Path, output_dir: Path, video_path: Path,
     credits_path = output_dir / "credits.json"
     results.append(check_credits(credits_path))
     results.append(check_geographic_relevance(credits_path))
+    results.append(check_asset_uniqueness(credits_path))
+    results.append(check_asset_story_relevance(credits_path, script_path))
 
     # Scene completeness: every planned scene must have an approved image
     if scene_count is not None:

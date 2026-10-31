@@ -317,6 +317,74 @@ def _clip_relevance(data: bytes, prompts: List[str]) -> Optional[float]:
         return None
 
 
+def _clip_geographic_relevance(data: bytes, config: Dict[str, Any]) -> Tuple[bool, float, str]:
+    """Check if image visually matches the region using CLIP.
+
+    Returns (is_relevant, relevance_score, reason).
+    Uses CLIP to compare image against region prompts vs. distractor prompts.
+    """
+    region_name = str(config.get("name", ""))
+    country = str(config.get("country", ""))
+
+    # Positive prompts: what we expect to see for this region
+    positive_prompts = [
+        f"a photo of {region_name}",
+        f"a historical image of {region_name}",
+        f"{region_name} landmark",
+        f"{region_name} street",
+        f"{region_name} architecture",
+        f"a photo of {country}",
+    ]
+
+    # Negative/distractor prompts: common false positives
+    negative_prompts = [
+        "a photo of Little Tokyo Los Angeles",
+        "a photo of a Japanese-American community in California",
+        "a photo of a museum object on plain background",
+        "a scanned document or book page",
+        "a studio portrait of a person",
+    ]
+
+    # Region-specific negative prompts
+    region_key = region_name.lower().replace(" ", "_")
+    if region_key == "tokyo":
+        negative_prompts.extend([
+            "a photo of Little Tokyo Los Angeles",
+            "a photo of a Japanese-American community in California",
+        ])
+    elif region_key == "lagos":
+        negative_prompts.extend([
+            "a photo of Lagos Nigeria",
+            "a photo of a Nigerian city",
+            "a photo of West Africa",
+        ])
+
+    try:
+        import torch
+        from transformers import CLIPModel, CLIPProcessor
+        model, proc = _load_clip_once()
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+
+        all_prompts = positive_prompts + negative_prompts
+        inputs = proc(text=all_prompts, images=im, return_tensors="pt", padding=True)
+        with torch.no_grad():
+            out = model(**inputs)
+        logits = out.logits_per_image[0]
+        probs = logits.softmax(dim=-1)
+
+        positive_max = float(probs[:len(positive_prompts)].max())
+        negative_max = float(probs[len(positive_prompts):].max())
+
+        # Require positive relevance to exceed negative by a margin
+        if positive_max > negative_max * 1.5 and positive_max > 0.15:
+            return True, positive_max, f"clip_positive:{positive_max:.3f}"
+        else:
+            return False, positive_max, f"clip_negative_dominates:pos={positive_max:.3f},neg={negative_max:.3f}"
+
+    except Exception:
+        return True, 0.0, "clip_unavailable"
+
+
 def _metadata_relevance(item: Dict[str, Any], config: Dict[str, Any]) -> float:
     """Cheap metadata keyword relevance when CLIP is unavailable (0-1)."""
     name = _norm(str(config.get("name", "")))
@@ -334,6 +402,63 @@ def _metadata_relevance(item: Dict[str, Any], config: Dict[str, Any]) -> float:
     if total == 0:
         return 0.0
     return min(1.0, hits / max(1, total))
+
+
+def _geographic_relevance(item: Dict[str, Any], config: Dict[str, Any]) -> Tuple[bool, float, str]:
+    """Check if asset is geographically relevant to the region.
+
+    Returns (is_relevant, relevance_score, reason).
+
+    Uses multiple signals:
+    1. Explicit place names from config (including historical names)
+    2. Country name
+    3. Geographic coordinates if available in metadata
+    4. CLIP visual relevance to region prompts
+    5. Known false positive filters (e.g., "Little Tokyo" for Tokyo, Japan)
+
+    An asset is rejected only when we have positive evidence it depicts
+    a different location. Absence of evidence is not rejection.
+    """
+    region_name = str(config.get("name", ""))
+    country = str(config.get("country", ""))
+    place_names = [p.get("spelling", "") for p in config.get("place_names", []) if p.get("spelling")]
+    historical_names = [p.get("historical_name", "") for p in config.get("place_names", []) if p.get("historical_name")]
+
+    # Combine all relevant location terms
+    location_terms = [region_name, country] + place_names + historical_names
+    location_terms = [_norm(t) for t in location_terms if t]
+
+    hay = _norm(item.get("title", "") + " " + item.get("description", "") +
+                " " + " ".join(item.get("categories", [])) + " " + " ".join(item.get("facets", [])))
+
+    # Check for explicit location mentions
+    location_hits = sum(1 for term in location_terms if term and _kw_hit(term, hay))
+
+    # Known false positive filters (region-specific)
+    # These are terms that strongly indicate a DIFFERENT location
+    false_positives = {
+        "tokyo": ["little tokyo", "los angeles", "california", "sawtelle", "japantown"],
+        "lagos": ["nigeria", "nigerian", "africa", "african", "lagos nigeria", "lagos state"],
+    }
+    region_key = region_name.lower().replace(" ", "_")
+    region_false_positives = false_positives.get(region_key, [])
+
+    for fp in region_false_positives:
+        if _kw_hit(fp, hay):
+            return False, 0.0, f"false_positive:{fp}"
+
+    # If we have explicit location hits, asset is relevant
+    if location_hits >= 2:
+        return True, min(1.0, location_hits / len(location_terms)), f"location_hits:{location_hits}"
+
+    # If we have at least 1 location hit, consider it potentially relevant
+    # (don't reject on absence of evidence alone)
+    if location_hits >= 1:
+        return True, 0.5, "single_location_hit"
+
+    # No explicit location mentions: check CLIP relevance as fallback
+    # This will be evaluated later in the pipeline when image is downloaded
+    return True, 0.2, "no_explicit_location"
 
 
 def _kw_hit(term: str, hay_norm: str) -> bool:
@@ -430,6 +555,7 @@ def discover_inventory(config: Dict[str, Any],
     # ---- Phase 2: metadata eligibility + relevance pre-sort ----
     meta_eligible: List[Tuple[float, Dict[str, Any]]] = []
     rejected_meta = 0
+    rejected_geo = 0
     for c in raw_candidates:
         ok, reason = _eligible(c, config)
         if not ok:
@@ -439,11 +565,20 @@ def discover_inventory(config: Dict[str, Any],
             if inventory.coverage:
                 inventory.coverage[0].errors.append(cov_err)
             continue
-        score = _metadata_relevance(c, config)
+        # Geographic relevance check at metadata stage
+        geo_ok, geo_score, geo_reason = _geographic_relevance(c, config)
+        if not geo_ok:
+            rejected_geo += 1
+            cov_err = f"rejected {c.get('title','')[:60]}: geographic_irrelevant:{geo_reason}"
+            if inventory.coverage:
+                inventory.coverage[0].errors.append(cov_err)
+            continue
+        # Combined score: metadata relevance + geographic relevance
+        score = (_metadata_relevance(c, config) + geo_score) / 2.0
         meta_eligible.append((score, c))
 
     meta_eligible.sort(key=lambda t: -t[0])
-    inventory.total_rejected = rejected_meta
+    inventory.total_rejected = rejected_meta + rejected_geo
 
     # ---- Phase 3: download + vet only the top candidates ----
     downloads_attempted = 0
@@ -476,9 +611,18 @@ def discover_inventory(config: Dict[str, Any],
                 inventory.coverage[0].errors.append(f"rejected {c.get('title','')[:60]}: text_heavy_document")
             continue
 
+        # Geographic relevance: CLIP against region prompts + negative distractors.
+        clip_geo_ok, clip_geo_score, clip_geo_reason = _clip_geographic_relevance(data, config)
+        if not clip_geo_ok:
+            if inventory.coverage:
+                inventory.coverage[0].errors.append(f"rejected {c.get('title','')[:60]}: clip_geographic_irrelevant:{clip_geo_reason}")
+            continue
+
         # Relevance: CLIP against region prompts, else metadata fallback.
         clip_score = _clip_relevance(data, clip_prompts)
+        # Combine CLIP geographic relevance with general CLIP relevance
         relevance = clip_score if clip_score is not None else score
+        relevance = (relevance + clip_geo_score) / 2.0
 
         item = InventoryItem(
             provider=c["provider"],

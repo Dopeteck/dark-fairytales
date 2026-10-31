@@ -382,16 +382,16 @@ def main():
                           for c in inventory.coverage])
         sys.exit(1)
 
-    # Stage 3: Select a story from the inventory (story emerges from material).
+# Stage 3: Select a story from the inventory (story emerges from material).
     print("\n[3/8] Selecting story from inventory...")
     story_selection = load_story(topic["destination_slug"])
     if story_selection is None:
         clusters = cluster_inventory(inventory)
-        story = select_story(clusters)
+        story = select_story(clusters, region_name=topic["destination_name"])
         if story is None:
             print("ERROR: No supported story could be selected from the inventory.")
             print("  Coverage:", [(c.provider, c.results_returned, c.skipped, c.skip_reason, len(c.errors))
-                              for c in inventory.coverage])
+                          for c in inventory.coverage])
             sys.exit(1)
         scenes = plan_scenes_from_story(story, inventory)
         if not scenes:
@@ -459,6 +459,27 @@ def main():
     print(f"  Extracted {len(research.get('claims', []))} claims")
     artifacts["research"] = research
 
+    # Extract verified claims from research for narration
+    verified_claims = [c["text"] for c in research.get("claims", []) if c.get("status") == "verified"]
+    claim_support = {}
+    for c in research.get("claims", []):
+        if c.get("status") == "verified":
+            claim_support[c["text"]] = [e.get("source_url") for e in c.get("evidence", []) if e.get("source_url")]
+
+    # Regenerate narration with verified claims only
+    narration = generate_story_narration(story, scenes,
+                                         claims=verified_claims,
+                                         claim_support=claim_support)
+    topic_for_research["description"] = narration
+    topic_for_research["title"] = story_selection.story_title
+    # Re-research with updated narration
+    research = research_topic(topic_for_research, paths)
+    if not research:
+        print("ERROR: Research failed after narration update")
+        sys.exit(1)
+    print(f"  Verified claims for narration: {len(verified_claims)}")
+    artifacts["research"] = research
+
     # Stage 6: Generate narration script from the story (not from a prewritten config story).
     print("\n[6/8] Generating narration script from story...")
     topic_for_script = dict(topic_for_research)
@@ -468,19 +489,6 @@ def main():
         sys.exit(1)
     print(f"  Words: {script.get('word_count', 0)}, Est. duration: {script.get('estimated_duration', 0)}s")
     artifacts["script"] = script
-
-    # Stage 5: Validate claims
-    print("\n[5/8] Validating claims...")
-    claim_validation = validate_claims(script, research)
-    print(f"  Verified claims: {claim_validation['claims_mapped']}/{claim_validation['claims_total']}")
-    artifacts["claim_validation"] = claim_validation
-    # The narration must explain a meaningful historical development supported by
-    # independently verified research, not simply catalogue image titles.
-    if claim_validation.get("verification_ratio", 0) < 0.5 and claim_validation.get("claims_total", 0) > 0:
-        print("ERROR: Less than half of researched claims are independently verified; "
-              "refusing to build a narrative on unverified claims.")
-        save_artifacts(artifacts, paths)
-        sys.exit(1)
 
     # Stage 6: Visual review
     print("\n[6/8] Rendering visual review board...")

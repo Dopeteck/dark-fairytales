@@ -233,8 +233,91 @@ def cluster_inventory(inventory: RegionInventory) -> List[Tuple[str, List[Invent
     return clusters
 
 
+def _extract_entities_from_items(items: List[InventoryItem], region_name: str) -> Dict[str, List[str]]:
+    """Extract specific historical entities from asset metadata.
+
+    Returns dict with keys: people, places, events, periods.
+    Only returns entities that appear in multiple assets (consensus).
+    """
+    from collections import Counter
+    import re
+
+    people = Counter()
+    places = Counter()
+    events = Counter()
+    periods = Counter()
+
+    # Common person name patterns (simplified)
+    person_patterns = [
+        r'\b[A-Z][a-z]+ [A-Z][a-z]+\b',  # First Last
+        r'\b(?:King|Queen|Emperor|Shogun|Sultan|Chief|Governor|President|General|Admiral)\s+[A-Z][a-z]+',
+        r'\b[A-Z][a-z]+ (?:I|II|III|IV|V)\b',  # Monarchs
+    ]
+
+    # Known place names for the region
+    place_names = {region_name.lower()}
+    # Add from place_names in config (would need to pass config, for now use region_name)
+
+    for item in items:
+        text = (item.title + " " + item.description + " " +
+                " ".join(item.categories) + " " + " ".join(item.facets))
+
+        # Extract person names
+        for pattern in person_patterns:
+            for match in re.finditer(pattern, text):
+                name = match.group().strip()
+                if len(name) > 3 and name.lower() not in {"the", "and", "of", "in", "a", "an", "with", "for", "on", "at", "by", "from"}:
+                    people[name] += 1
+
+        # Extract years as periods
+        for year_match in re.finditer(r'\b(1[0-9]{3}|20[0-2][0-9])\b', text):
+            periods[year_match.group()] += 1
+
+    # Only keep entities that appear in multiple assets (consensus)
+    min_occurrences = max(2, len(items) // 3)
+    return {
+        "people": [p for p, c in people.items() if c >= min_occurrences],
+        "places": [p for p, c in places.items() if c >= min_occurrences],
+        "events": [e for e, c in events.items() if c >= min_occurrences],
+        "periods": [p for p, c in periods.items() if c >= min_occurrences],
+    }
+
+
+def _generate_specific_title(theme: str, entities: Dict[str, List[str]], region_name: str) -> Tuple[str, bool]:
+    """Generate a specific story title from extracted entities.
+
+    Returns (title, is_specific).
+    is_specific is True if the title identifies a concrete historical subject.
+    """
+    if entities["people"]:
+        person = entities["people"][0]
+        if entities["periods"]:
+            return f"The {person} Era in {region_name}", True
+        return f"{person} and the History of {region_name}", True
+
+    if entities["places"]:
+        place = entities["places"][0]
+        if entities["periods"]:
+            return f"{place} ({entities['periods'][0]}) in {region_name}", True
+        return f"The History of {place} in {region_name}", True
+
+    if entities["events"]:
+        event = entities["events"][0]
+        if entities["periods"]:
+            return f"The {event} ({entities['periods'][0]}) in {region_name}", True
+        return f"The {event} in {region_name}", True
+
+    if entities["periods"]:
+        period = entities["periods"][0]
+        return f"{region_name} in the {period}s", True
+
+    # No specific entities found
+    return f"{theme.title()} story", False
+
+
 def _score_candidate(theme: str, items: List[InventoryItem],
-                     claim_support: Dict[str, List[str]]) -> StoryCandidate:
+                     claim_support: Dict[str, List[str]],
+                     region_name: str = "") -> StoryCandidate:
     """Score a candidate story by evidence, verified claims, coherence, variety, duration.
 
     Verified research claims carry the most weight: a cluster label alone is not
@@ -292,10 +375,22 @@ def _score_candidate(theme: str, items: List[InventoryItem],
     # Duration fit: enough assets for ~45-60s video at ~5-7s per scene (8-12 scenes).
     duration_fit_score = min(1.0, n / 10.0)
 
+    # Extract specific entities to generate a meaningful title
+    entities = _extract_entities_from_items(items, region_name) if region_name else {"people": [], "places": [], "events": [], "periods": []}
+    title, is_specific = _generate_specific_title(theme, entities, region_name)
+
+    # Reject generic stories that lack a specific historical subject
+    if not is_specific:
+        return StoryCandidate(
+            theme=theme, title=title, summary="",
+            rejection_reason="no_specific_historical_subject"
+        )
+
     # Narrative themes (events, people, independence) score higher than generic
     # containers (architecture, landmarks, daily_life) because they imply a story.
+    # Only give bonus if we have specific entities.
     narrative_themes = {"events", "people", "independence", "conflict", "trade", "transport", "culture"}
-    narrative_bonus = 0.10 if theme in narrative_themes else 0.0
+    narrative_bonus = 0.10 if (theme in narrative_themes and is_specific) else 0.0
 
     total = (0.25 * evidence_score + 0.20 * claim_score +
              0.15 * asset_variety_score + 0.15 * coherence_score +
@@ -314,7 +409,7 @@ def _score_candidate(theme: str, items: List[InventoryItem],
 
     return StoryCandidate(
         theme=theme,
-        title=f"{theme.title()} story",
+        title=title,
         summary=f"A {theme}-focused narrative built from {len(items)} {provider_list(assets)} assets.",
         assets=assets,
         evidence_score=evidence_score,
@@ -335,7 +430,8 @@ def provider_list(assets: List[AssetRef]) -> str:
 
 
 def select_story(clusters: List[Tuple[str, List[InventoryItem]]],
-                 claim_support: Optional[Dict[str, List[str]]] = None) -> Optional[StoryCandidate]:
+                 claim_support: Optional[Dict[str, List[str]]] = None,
+                 region_name: str = "") -> Optional[StoryCandidate]:
     """Select the best-supported candidate story from inventory clusters.
 
     Ranking: evidence strength, verified claims, asset variety, coherence,
@@ -345,9 +441,13 @@ def select_story(clusters: List[Tuple[str, List[InventoryItem]]],
     """
     claim_support = claim_support or {}
     candidates: List[StoryCandidate] = []
+    rejected_reasons = []
     for theme, items in clusters:
-        cand = _score_candidate(theme, items, claim_support)
-        candidates.append(cand)
+        cand = _score_candidate(theme, items, claim_support, region_name)
+        if cand.rejection_reason:
+            rejected_reasons.append(f"{theme}: {cand.rejection_reason}")
+        else:
+            candidates.append(cand)
 
     # Only stories with enough distinct assets AND sufficient narrative coherence
     # can support a 45-60s video. A generic cluster label is not a story.
@@ -355,6 +455,8 @@ def select_story(clusters: List[Tuple[str, List[InventoryItem]]],
     viable = [c for c in candidates
               if len(c.assets) >= 6 and c.total_score >= MIN_TOTAL_SCORE]
     if not viable:
+        if rejected_reasons:
+            print(f"  Rejected candidates: {', '.join(rejected_reasons)}")
         return None
 
     viable.sort(key=lambda c: c.total_score, reverse=True)
@@ -384,6 +486,7 @@ def plan_scenes_from_story(story: StoryCandidate,
 
     chosen_items: List[InventoryItem] = []
     seen_digests: Set[str] = set()
+    seen_titles: Set[str] = set()
     for asset in story.assets:
         item = None
         if asset.digest and asset.digest in by_digest:
@@ -394,9 +497,15 @@ def plan_scenes_from_story(story: StoryCandidate,
             # Asset from the winning story is not in the eligible inventory;
             # never silently substitute from another cluster.
             continue
-        if item.digest in seen_digests:
+        # Deduplicate by both digest and normalized title to prevent
+        # same visual asset appearing in multiple scenes.
+        norm_title = _norm(item.title).strip()
+        if item.digest in seen_digests or (norm_title and norm_title in seen_titles):
             continue
-        seen_digests.add(item.digest)
+        if item.digest:
+            seen_digests.add(item.digest)
+        if norm_title:
+            seen_titles.add(norm_title)
         chosen_items.append(item)
 
     if not chosen_items:
@@ -492,22 +601,44 @@ def generate_story_narration(story: StoryCandidate, scenes: List[Dict[str, Any]]
     claims = claims or list(story.claims)
     claim_support = claim_support or story.claim_support
 
+    # Filter to only verified claims (from research)
+    verified_claims = [c for c in claims if claim_support.get(c)]
+    # Remove duplicates and generic filler claims
+    seen = set()
+    filtered_claims = []
+    for c in verified_claims:
+        c_norm = c.lower().strip()
+        if c_norm in seen:
+            continue
+        # Skip generic filler patterns
+        if any(phrase in c_norm for phrase in [
+            "this is the story of",
+            "surviving material shows",
+            "across generations",
+            "rich history waiting to be discovered",
+        ]):
+            continue
+        seen.add(c_norm)
+        filtered_claims.append(c)
+
     lines: List[str] = []
     # Hook: introduce the region and the historical arc from verified claims.
-    if claims:
-        lines.append(f"This is the story of {story.title.lower()}. {claims[0]}")
-        # Body: each subsequent claim builds the narrative arc.
-        for claim in claims[1:1 + max(0, len(scenes) - 1)]:
+    if filtered_claims:
+        # Use the specific story title, not "theme story"
+        lines.append(f"Before {story.title} became what it is today, {filtered_claims[0].lower()}")
+        # Body: each subsequent verified claim builds the narrative arc.
+        for claim in filtered_claims[1:1 + max(0, len(scenes) - 1)]:
             lines.append(claim)
     else:
-        # No verified claims: tell what the collection shows, without overclaiming.
-        lines.append(f"This is the story of {story.title.lower()}. "
-                     f"The surviving material shows {story.theme.lower()} across generations.")
-        for sc in scenes[:max(0, len(scenes) - 1)]:
-            asset = sc.get("asset_metadata", {})
+        # No verified claims: minimal honest narration about the collection.
+        # Do NOT invent a story or use generic filler.
+        lines.append(f"Historical records from {story.assets[0].provider if story.assets else 'archives'} document {story.title.lower()}.")
+        # Use only the first scene's asset as illustration, don't invent narrative.
+        if scenes:
+            asset = scenes[0].get("asset_metadata", {})
             lines.append(
                 f"A record titled \"{asset.get('title', 'Untitled')}\" "
-                f"from {asset.get('provider', 'an archive')} illustrates this thread."
+                f"from {asset.get('provider', 'an archive')} illustrates this period."
             )
 
     closing = "Every frame is a genuine historical record."
