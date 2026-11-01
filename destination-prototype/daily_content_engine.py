@@ -592,8 +592,9 @@ def select_next_topic(candidates: List[Topic], state: EditorialState,
 
 def _is_coherent_story(topic: Topic) -> bool:
     """Check if a topic represents a coherent, specific story (not a generic category)."""
-    # Must have at least 2 specific entities (people, places, events, landmarks)
-    if len(topic.entities) < 2:
+    # Must have at least 1 specific entity (people, places, events, landmarks)
+    # At least 1 entity ensures the topic is grounded in something specific
+    if len(topic.entities) < 1:
         return False
     
     # Must have at least 1 claim reference for fact-checking

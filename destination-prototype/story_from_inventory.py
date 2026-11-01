@@ -255,20 +255,56 @@ def _extract_entities_from_items(items: List[InventoryItem], region_name: str) -
         r'\b[A-Z][a-z]+ (?:I|II|III|IV|V)\b',  # Monarchs
     ]
 
+    # Terms that look like person names but are actually art metadata / descriptors
+    # These should be filtered out from people extraction
+    NON_PERSON_TERMS = {
+        "print japanese", "color woodblock", "woodblock print", "ukiyo e", "ukiyo e",
+        "edo period", "meiji period", "taisho period", "showa period",
+        "japanese print", "japanese woodblock", "japanese painting",
+        "color print", "black white", "ink painting", "scroll painting",
+        "album leaf", "fan print", "pillar print", "surimono print",
+        "artist unknown", "unknown artist", "school of", "circle of",
+        "style of", "after ", "attributed to", "manner of",
+        "signed ", "sealed ", "dated ", "inscribed ",
+        "mount fuji", "mt fuji", "tokyo bay", "edo bay",
+        "nihonbashi bridge", "tokugawa shogunate", "imperial palace",
+        "national museum", "metropolitan museum", "british museum",
+        "victoria albert", "art institute", "cleveland museum",
+        "smithsonian institution", "library congress", "europeana collections",
+        "public domain", "creative commons", "open access", "no known copyright",
+    }
+
     # Known place names for the region
     place_names = {region_name.lower()}
     # Add from place_names in config (would need to pass config, for now use region_name)
 
     for item in items:
+        # Include author field for person name extraction
         text = (item.title + " " + item.description + " " +
                 " ".join(item.categories) + " " + " ".join(item.facets))
+        if item.author:
+            text += " " + item.author
 
         # Extract person names
         for pattern in person_patterns:
             for match in re.finditer(pattern, text):
                 name = match.group().strip()
-                if len(name) > 3 and name.lower() not in {"the", "and", "of", "in", "a", "an", "with", "for", "on", "at", "by", "from"}:
-                    people[name] += 1
+                name_lower = name.lower()
+                if len(name) > 3 and name_lower not in {"the", "and", "of", "in", "a", "an", "with", "for", "on", "at", "by", "from"}:
+                    # Filter out known non-person terms
+                    if name_lower not in NON_PERSON_TERMS:
+                        # Also filter out if it contains any non-person term as substring
+                        if not any(term in name_lower for term in NON_PERSON_TERMS if len(term) > 4):
+                            people[name] += 1
+
+        # Also extract single-word capitalized names from author field
+        # These are likely to be artist surnames (e.g., "Hiroshige", "Hokusai")
+        if item.author:
+            author_words = item.author.split()
+            for word in author_words:
+                if (len(word) > 3 and word[0].isupper() and word.lower() not in NON_PERSON_TERMS and
+                    not any(term in word.lower() for term in NON_PERSON_TERMS if len(term) > 4)):
+                    people[word] += 1
 
         # Extract years as periods
         for year_match in re.finditer(r'\b(1[0-9]{3}|20[0-2][0-9])\b', text):
@@ -430,15 +466,13 @@ def provider_list(assets: List[AssetRef]) -> str:
     return ", ".join(f"{k}({v})" for k, v in c.most_common(3))
 
 
-def select_story(clusters: List[Tuple[str, List[InventoryItem]]],
-                 claim_support: Optional[Dict[str, List[str]]] = None,
-                 region_name: str = "") -> Optional[StoryCandidate]:
-    """Select the best-supported candidate story from inventory clusters.
-
-    Ranking: evidence strength, verified claims, asset variety, coherence,
-    chronological coherence, visual variety, duration fit. Returns None when no
-    candidate has enough assets or sufficient narrative coherence to support a
-    45-60s video -- the caller must stop honestly rather than fabricate.
+def select_story_candidates(clusters: List[Tuple[str, List[InventoryItem]]],
+                           claim_support: Optional[Dict[str, List[str]]] = None,
+                           region_name: str = "") -> List[StoryCandidate]:
+    """Return all viable candidate stories from inventory clusters, sorted by score.
+    
+    Returns empty list when no candidate has enough assets or sufficient narrative
+    coherence to support a 45-60s video.
     """
     claim_support = claim_support or {}
     candidates: List[StoryCandidate] = []
@@ -458,10 +492,24 @@ def select_story(clusters: List[Tuple[str, List[InventoryItem]]],
     if not viable:
         if rejected_reasons:
             print(f"  Rejected candidates: {', '.join(rejected_reasons)}")
-        return None
+        return []
 
     viable.sort(key=lambda c: c.total_score, reverse=True)
-    return viable[0]
+    return viable
+
+
+def select_story(clusters: List[Tuple[str, List[InventoryItem]]],
+                 claim_support: Optional[Dict[str, List[str]]] = None,
+                 region_name: str = "") -> Optional[StoryCandidate]:
+    """Select the best-supported candidate story from inventory clusters.
+
+    Ranking: evidence strength, verified claims, asset variety, coherence,
+    chronological coherence, visual variety, duration fit. Returns None when no
+    candidate has enough assets or sufficient narrative coherence to support a
+    45-60s video -- the caller must stop honestly rather than fabricate.
+    """
+    viable = select_story_candidates(clusters, claim_support, region_name)
+    return viable[0] if viable else None
 
 
 def plan_scenes_from_story(story: StoryCandidate,

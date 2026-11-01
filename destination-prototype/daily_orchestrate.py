@@ -17,7 +17,7 @@ OUTPUT_DIR = ROOT / "output"
 
 # Image-first pipeline modules (story emerges from material, not the reverse).
 from image_inventory import discover_inventory, load_inventory
-from story_from_inventory import (cluster_inventory, select_story,
+from story_from_inventory import (cluster_inventory, select_story, select_story_candidates,
                                   plan_scenes_from_story, generate_story_narration,
                                   save_story, load_story, StorySelection, StoryCandidate)
 
@@ -387,32 +387,15 @@ def main():
     story_selection = load_story(topic["destination_slug"])
     if story_selection is None:
         clusters = cluster_inventory(inventory)
-        story = select_story(clusters, region_name=topic["destination_name"])
-        if story is None:
+        # Get all viable candidates for fallback attempts
+        story_candidates = select_story_candidates(clusters, region_name=topic["destination_name"])
+        if not story_candidates:
             print("ERROR: No supported story could be selected from the inventory.")
             print("  Coverage:", [(c.provider, c.results_returned, c.skipped, c.skip_reason, len(c.errors))
                           for c in inventory.coverage])
             sys.exit(1)
-        scenes = plan_scenes_from_story(story, inventory)
-        if not scenes:
-            print("ERROR: Could not plan scenes from selected assets.")
-            sys.exit(1)
-        narration = generate_story_narration(story, scenes)
-        story_selection = StorySelection(
-            region_slug=topic["destination_slug"],
-            region_name=topic["destination_name"],
-            selected_theme=story.theme,
-            story_title=story.title,
-            story_summary=story.summary,
-            story_assets=story.assets,
-            candidates=[],
-            claims=[],
-            claim_support={},
-        )
-        save_story(topic["destination_slug"], story_selection)
     else:
-        # Reconstruct a typed StoryCandidate from the cached selection so
-        # scene planning uses the winning story's assets exclusively.
+        # Reconstruct a typed StoryCandidate from the cached selection
         story = StoryCandidate(
             theme=story_selection.selected_theme,
             title=story_selection.story_title,
@@ -421,15 +404,99 @@ def main():
             claims=story_selection.claims,
             claim_support=story_selection.claim_support,
         )
-        scenes = plan_scenes_from_story(story, inventory)
-        if not scenes:
-            print("ERROR: Could not plan scenes from selected assets.")
-            sys.exit(1)
-        narration = generate_story_narration(story, scenes,
-                                             claims=story_selection.claims,
-                                             claim_support=story_selection.claim_support)
-    print(f"  Selected: {story_selection.story_title} ({story_selection.selected_theme}) — "
-          f"{len(story_selection.story_assets)} assets")
+        story_candidates = [story]
+
+    # Try each story candidate (bounded fallback: max 3 attempts)
+    MAX_STORY_ATTEMPTS = 3
+    story = None
+    scenes = None
+    narration = None
+    story_selection = None
+
+    for attempt_idx, candidate in enumerate(story_candidates[:MAX_STORY_ATTEMPTS]):
+        print(f"\n  Trying story candidate {attempt_idx + 1}/{min(len(story_candidates), MAX_STORY_ATTEMPTS)}: {candidate.title} ({candidate.theme})")
+        
+        # Plan scenes for this candidate
+        candidate_scenes = plan_scenes_from_story(candidate, inventory)
+        if not candidate_scenes:
+            print(f"  WARNING: Could not plan scenes from candidate '{candidate.title}', trying next...")
+            continue
+        
+        # Generate initial narration for research
+        candidate_narration = generate_story_narration(candidate, candidate_scenes)
+        
+        # Research claims for this candidate
+        topic_for_research = dict(topic)
+        topic_for_research["description"] = candidate_narration
+        topic_for_research["title"] = candidate.title
+        research = research_topic(topic_for_research, paths)
+        
+        if not research:
+            print(f"  WARNING: Research failed for candidate '{candidate.title}', trying next...")
+            continue
+        
+        # Extract verified claims
+        verified_claims = [c["text"] for c in research.get("claims", []) if c.get("status") == "verified"]
+        claim_support = {}
+        for c in research.get("claims", []):
+            if c.get("status") == "verified":
+                claim_support[c["text"]] = [e.get("source_url") for e in c.get("evidence", []) if e.get("source_url")]
+        
+        # Check if we have enough verified claims
+        if len(verified_claims) < 8:  # MIN_VERIFIED_CLAIMS from generate_script
+            print(f"  WARNING: Insufficient verified claims ({len(verified_claims)}/8) for candidate '{candidate.title}', trying next...")
+            continue
+        
+        # Regenerate narration with verified claims
+        candidate_narration = generate_story_narration(candidate, candidate_scenes,
+                                                      claims=verified_claims,
+                                                      claim_support=claim_support)
+        
+        # Re-research with updated narration
+        topic_for_research["description"] = candidate_narration
+        topic_for_research["title"] = candidate.title
+        research = research_topic(topic_for_research, paths)
+        
+        if not research:
+            print(f"  WARNING: Re-research failed for candidate '{candidate.title}', trying next...")
+            continue
+        
+        # Re-extract verified claims after re-research
+        verified_claims = [c["text"] for c in research.get("claims", []) if c.get("status") == "verified"]
+        claim_support = {}
+        for c in research.get("claims", []):
+            if c.get("status") == "verified":
+                claim_support[c["text"]] = [e.get("source_url") for e in c.get("evidence", []) if e.get("source_url")]
+        
+        if len(verified_claims) < 8:
+            print(f"  WARNING: Insufficient verified claims after re-research ({len(verified_claims)}/8) for candidate '{candidate.title}', trying next...")
+            continue
+        
+        # Success! This candidate works
+        story = candidate
+        scenes = candidate_scenes
+        narration = candidate_narration
+        story_selection = StorySelection(
+            region_slug=topic["destination_slug"],
+            region_name=topic["destination_name"],
+            selected_theme=story.theme,
+            story_title=story.title,
+            story_summary=story.summary,
+            story_assets=story.assets,
+            candidates=[c.to_dict() for c in story_candidates],
+            claims=verified_claims,
+            claim_support=claim_support,
+        )
+        save_story(topic["destination_slug"], story_selection)
+        print(f"  Selected: {story_selection.story_title} ({story_selection.selected_theme}) — "
+              f"{len(story_selection.story_assets)} assets, {len(verified_claims)} verified claims")
+        break
+    else:
+        # All candidates exhausted
+        print(f"ERROR: All {min(len(story_candidates), MAX_STORY_ATTEMPTS)} story candidates failed to produce sufficient verified claims.")
+        print("  This indicates the inventory lacks assets supporting researchable historical claims.")
+        sys.exit(1)
+
     artifacts["story"] = story_selection.to_dict()
 
     # Stage 4: Plan scenes from selected assets (each scene references a pinned asset).

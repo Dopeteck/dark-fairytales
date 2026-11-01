@@ -488,8 +488,34 @@ class StorySelectionDedup(unittest.TestCase):
         import daily_content_engine as dce
         from daily_content_engine import Topic, EditorialState
         topics = [
-            Topic("tokyo", "Tokyo", "Japan", "Asia", "culture", "Tokyo Culture", "tokyo:culture:traditions", "Hook", "Desc", ["s1"]),
-            Topic("tokyo", "Tokyo", "Japan", "Asia", "hidden", "Tokyo Hidden", "tokyo:hidden:angle", "Hook", "Desc", ["s2"]),
+            Topic(
+                destination_slug="tokyo",
+                destination_name="Tokyo",
+                country="Japan",
+                continent="Asia",
+                category="culture",
+                title="Tokyo Culture",
+                story_angle="tokyo:culture:traditions",
+                hook="Hook",
+                description="Desc",
+                sources=["s1"],
+                entities=["Edo", "Tokugawa"],
+                claim_refs=["Edo founded 1603"],
+            ),
+            Topic(
+                destination_slug="tokyo",
+                destination_name="Tokyo",
+                country="Japan",
+                continent="Asia",
+                category="hidden",
+                title="Tokyo Hidden",
+                story_angle="tokyo:hidden:angle",
+                hook="Hook",
+                description="Desc",
+                sources=["s2"],
+                entities=["Tokyo", "Edo"],
+                claim_refs=["Tokyo renamed 1868"],
+            ),
         ]
         state = EditorialState(used_topics=["tokyo:culture:traditions"])
         result = dce.select_next_topic(topics, state)
@@ -500,7 +526,20 @@ class StorySelectionDedup(unittest.TestCase):
         import daily_content_engine as dce
         from daily_content_engine import Topic, EditorialState
         topics = [
-            Topic("tokyo", "Tokyo", "Japan", "Asia", "culture", "Tokyo Culture", "tokyo:culture:traditions", "Hook", "Desc", ["s1"]),
+            Topic(
+                destination_slug="tokyo",
+                destination_name="Tokyo",
+                country="Japan",
+                continent="Asia",
+                category="culture",
+                title="Tokyo Culture",
+                story_angle="tokyo:culture:traditions",
+                hook="Hook",
+                description="Desc",
+                sources=["s1"],
+                entities=["Edo", "Tokugawa"],
+                claim_refs=["Edo founded 1603"],
+            ),
         ]
         state = EditorialState(used_topics=["tokyo:culture:traditions"])
         result = dce.select_next_topic(topics, state)
@@ -637,6 +676,14 @@ class ScriptSceneConsistency(unittest.TestCase):
         research = {"claims": [
             {"status": "verified", "text": "Highlife emerged in Lagos in the 1950s as a fusion of jazz and local rhythms", "evidence": [{"source_url": "https://example.com"}]},
             {"status": "verified", "text": "Fela Kuti transformed highlife into afrobeat", "evidence": [{"source_url": "https://example.com"}]},
+            {"status": "verified", "text": "Lagos was the center of West African music in the 1960s and 1970s", "evidence": [{"source_url": "https://example.com"}]},
+            {"status": "verified", "text": "Highlife bands performed at dance halls across Lagos Island", "evidence": [{"source_url": "https://example.com"}]},
+            {"status": "verified", "text": "The genre blended traditional Yoruba percussion with Western brass instruments", "evidence": [{"source_url": "https://example.com"}]},
+            {"status": "verified", "text": "Nigerian independence in 1960 inspired a new wave of musical creativity in Lagos", "evidence": [{"source_url": "https://example.com"}]},
+            {"status": "verified", "text": "Victor Olaiya and Rex Lawson popularized highlife across Nigeria", "evidence": [{"source_url": "https://example.com"}]},
+            {"status": "verified", "text": "The Lagos music scene influenced Ghanaian and Sierra Leonean highlife", "evidence": [{"source_url": "https://example.com"}]},
+            {"status": "verified", "text": "By the 1970s Lagos had over 50 nightclubs featuring live highlife bands", "evidence": [{"source_url": "https://example.com"}]},
+            {"status": "verified", "text": "Modern Nigerian afrobeats traces its roots to 1970s Lagos highlife pioneers", "evidence": [{"source_url": "https://example.com"}]},
         ]}
         script = gs.build_script_from_research(topic, research)
         narration = script.narration.lower()

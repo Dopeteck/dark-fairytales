@@ -5,6 +5,7 @@ Generates narration scripts from research records, optimized for 45-60 second vi
 """
 import json
 import re
+import sys
 import yaml
 import glob
 from dataclasses import dataclass, asdict
@@ -17,9 +18,13 @@ DATA_DIR = ROOT / "destination-prototype" / "data"
 REGIONS_DIR = ROOT / "regions"
 
 # Target word count for 45-60s at ~150-160 WPM (Kokoro default ~150-170 WPM)
-TARGET_WORDS_MIN = 120
-TARGET_WORDS_MAX = 150
+TARGET_WORDS_MIN = 110
+TARGET_WORDS_MAX = 155
 TARGET_WORDS_IDEAL = 135
+
+# Minimum verified claims needed to produce a valid narration
+# At ~12-15 words per claim sentence, need 8-9 claims for 110-155 words
+MIN_VERIFIED_CLAIMS = 8
 
 
 @dataclass
@@ -67,11 +72,13 @@ def load_research(topic_slug: str, research_path: Optional[str] = None) -> Optio
         return json.load(f)
 
 
-def build_script_from_research(topic_data: Dict, research: Optional[Dict], research_file: str = "") -> Script:
+def build_script_from_research(topic_data: Dict, research: Optional[Dict], research_file: str = "") -> Optional[Script]:
     """Generate a complete script from topic config and research.
     
     Narration is built from verified research claims, not from config narration.
     Every factual claim in the output must be traceable to a verified claim.
+    
+    Returns None if insufficient verified claims to produce valid narration.
     """
     destination_slug = topic_data.get("destination_slug", "")
     destination = topic_data.get("destination", "")
@@ -116,7 +123,11 @@ def build_script_from_research(topic_data: Dict, research: Optional[Dict], resea
                 provider_failure_claims.append(claim)
 
     # Build narration from verified claims only
-    narration = build_narration_from_claims(hook, verified_claims, destination, category)
+    try:
+        narration = build_narration_from_claims(hook, verified_claims, destination, category)
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return None
     word_count = len(narration.split())
 
     # Trim if too long
@@ -124,19 +135,10 @@ def build_script_from_research(topic_data: Dict, research: Optional[Dict], resea
         narration = trim_to_word_count(narration, TARGET_WORDS_MAX)
         word_count = len(narration.split())
 
-    # If too short, add more verified claims to reach minimum (110 words for renderer)
-    # We don't pad with generic filler or description text - only verified claims
-    if word_count < TARGET_WORDS_MIN and research:
-        remaining = [c for c in _sort_claims_chronologically(verified_claims)
-                     if c not in _select_claims_for_beat(_sort_claims_chronologically(verified_claims), "opening", max_claims=2)
-                     + _select_claims_for_beat(_sort_claims_chronologically(verified_claims), "development", max_claims=3)
-                     + _select_claims_for_beat(_sort_claims_chronologically(verified_claims), "climax", max_claims=2)
-                     + _select_claims_for_beat(_sort_claims_chronologically(verified_claims), "resolution", max_claims=2)]
-        for claim in remaining[:3]:
-            narration += " " + _claim_to_narrative_sentence(claim, "development")
-            word_count = len(narration.split())
-            if word_count >= TARGET_WORDS_MIN:
-                break
+    # Should not happen with new logic, but keep as safety
+    if word_count < TARGET_WORDS_MIN:
+        print(f"ERROR: Narration still too short ({word_count} words) after claim distribution", file=sys.stderr)
+        return None
 
     estimated_duration = word_count / 150 * 60  # seconds at 150 WPM
 
@@ -167,10 +169,18 @@ def build_narration_from_claims(hook: str, verified_claims: List[Dict], destinat
     
     Organizes claims into a narrative arc: context -> development -> climax -> resolution.
     Each sentence must be traceable to a verified claim.
+    
+    Raises:
+        ValueError: If insufficient verified claims to meet minimum word count.
     """
     if not verified_claims:
-        # Fallback: minimal narration with just the hook
-        return f"{hook} The history of {destination} awaits deeper research."
+        raise ValueError(f"No verified claims available for {destination}. Cannot generate narration without evidence.")
+    
+    if len(verified_claims) < MIN_VERIFIED_CLAIMS:
+        raise ValueError(
+            f"Insufficient verified claims for {destination}: {len(verified_claims)} verified, "
+            f"minimum {MIN_VERIFIED_CLAIMS} required to produce {TARGET_WORDS_MIN}-{TARGET_WORDS_MAX} word narration."
+        )
     
     # Sort claims by chronological hints (years, periods) if available
     sorted_claims = _sort_claims_chronologically(verified_claims)
@@ -178,37 +188,47 @@ def build_narration_from_claims(hook: str, verified_claims: List[Dict], destinat
     # Build narrative structure
     parts = [hook]
     
-    # Group claims into narrative beats
-    # Opening: Establish context (earliest period, founding, origin)
-    opening_claims = _select_claims_for_beat(sorted_claims, "opening", max_claims=2)
+    # Distribute claims across narrative beats more evenly
+    n = len(sorted_claims)
+    # Opening: first 2 claims
+    opening_claims = sorted_claims[:min(2, n)]
     for claim in opening_claims:
         parts.append(_claim_to_narrative_sentence(claim, "opening"))
     
-    # Development: Key events, changes, growth
-    development_claims = _select_claims_for_beat(sorted_claims, "development", max_claims=3)
-    for claim in development_claims:
+    # Development: next claims up to n-2
+    development_end = max(2, n - 2)
+    development_claims = sorted_claims[2:development_end]
+    for claim in development_claims[:3]:
         parts.append(_claim_to_narrative_sentence(claim, "development"))
     
-    # Climax: Turning point, peak, transformation
-    climax_claims = _select_claims_for_beat(sorted_claims, "climax", max_claims=2)
-    for claim in climax_claims:
-        parts.append(_claim_to_narrative_sentence(claim, "climax"))
+    # Climax: second-to-last claim (if n > 3)
+    if n > 3:
+        parts.append(_claim_to_narrative_sentence(sorted_claims[n - 2], "climax"))
     
-    # Resolution: Legacy, present day, what remains
-    resolution_claims = _select_claims_for_beat(sorted_claims, "resolution", max_claims=2)
-    for claim in resolution_claims:
-        parts.append(_claim_to_narrative_sentence(claim, "resolution"))
+    # Resolution: last claim
+    parts.append(_claim_to_narrative_sentence(sorted_claims[-1], "resolution"))
     
-    # Ensure we have enough content
+    # Ensure we have enough content - add more development claims if needed
     narration = " ".join(parts)
     if len(narration.split()) < TARGET_WORDS_MIN:
-        # Add more claims if available
-        remaining = [c for c in sorted_claims if c not in opening_claims + development_claims + climax_claims + resolution_claims]
+        # Add remaining claims not yet used
+        used_indices = set()
+        used_indices.update(range(min(2, n)))  # opening
+        used_indices.update(range(2, min(development_end, 2 + 3)))  # development
+        if n > 3:
+            used_indices.add(n - 2)  # climax
+        used_indices.add(n - 1)  # resolution
+        
+        remaining = [c for i, c in enumerate(sorted_claims) if i not in used_indices]
         for claim in remaining[:3]:
             parts.append(_claim_to_narrative_sentence(claim, "development"))
             narration = " ".join(parts)
             if len(narration.split()) >= TARGET_WORDS_MIN:
                 break
+    
+    # Final trim if too long
+    if len(narration.split()) > TARGET_WORDS_MAX:
+        narration = trim_to_word_count(narration, TARGET_WORDS_MAX)
     
     return narration
 
@@ -223,36 +243,6 @@ def _sort_claims_chronologically(claims: List[Dict]) -> List[Dict]:
         return 9999  # Claims without dates go to the end
     
     return sorted(claims, key=lambda c: extract_earliest_year(c["text"]))
-
-
-def _select_claims_for_beat(claims: List[Dict], beat: str, max_claims: int) -> List[Dict]:
-    """Select appropriate claims for a narrative beat without overlap."""
-    if not claims:
-        return []
-    
-    n = len(claims)
-    # Define non-overlapping ranges for each beat
-    # opening: first 2 claims (indices 0, 1)
-    # development: claims 2 to n-3 (if available)
-    # climax: claim n-2 (if n > 3)
-    # resolution: last claim only (index n-1)
-    if beat == "opening":
-        # First 1-2 claims
-        return claims[:min(2, max_claims, n)]
-    elif beat == "development":
-        # Claims after opening, before climax/resolution
-        start = min(2, n)
-        end = n - 2 if n > 3 else n
-        return claims[start:min(end, start + max_claims)]
-    elif beat == "climax":
-        # Second-to-last claim (if enough claims)
-        if n <= 3:
-            return []
-        return [claims[n - 2]]
-    elif beat == "resolution":
-        # Last claim only (avoid overlap with climax)
-        return claims[-1:] if n > 0 else []
-    return []
 
 
 def _claim_to_narrative_sentence(claim: Dict, beat: str) -> str:
