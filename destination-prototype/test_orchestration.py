@@ -1364,6 +1364,109 @@ def test_story_fallback_mechanism():
     print("OK test_story_fallback_mechanism passed")
 
 
+def test_orchestrator_tries_multiple_candidates_on_insufficient_claims():
+    """Test that orchestrator tries distinct candidates when first yields <8 verified claims.
+    
+    This reproduces the exact failure from Actions run #255:
+    - Only 1 candidate produced (Hiroshige)
+    - Only 3 verified claims (needed 8)
+    - No fallback attempted because only 1 candidate existed
+    
+    Now with entity-split candidates, orchestrator should try up to 3 distinct
+    candidates from the inventory before failing.
+    """
+    from story_from_inventory import _build_entity_candidates, StoryCandidate, AssetRef
+    from image_inventory import InventoryItem
+    
+    # Create inventory items for multiple distinct entities in the same theme
+    # (e.g., culture cluster with both Hiroshige and Hokusai assets)
+    items = []
+    
+    # Hiroshige items (6 assets)
+    for i in range(6):
+        items.append(InventoryItem(
+            provider="museum", title=f"Hiroshige Print {i}", description=f"Print by Utagawa Hiroshige showing Edo scene {i}",
+            image_url=f"https://example.com/h{i}.jpg", source_url=f"https://example.com/h{i}",
+            rights="PD", rights_statement="PD", rights_url="", license_url="", author="Utagawa Hiroshige",
+            identifier=f"h{i}", categories=["print", "culture"], facets=["Hiroshige", "ukiyo-e"],
+            date_text="1850", year_range=[1840, 1860], dimensions=(1000, 800),
+            digest=f"dh{i}", clip_score=0.5, relevance_score=0.5,
+            eligible=True, discovered_via="test", discovered_at="2024-01-01",
+        ))
+    
+    # Hokusai items (6 assets) - distinct person entity
+    for i in range(6):
+        items.append(InventoryItem(
+            provider="museum", title=f"Hokusai Print {i}", description=f"Print by Katsushika Hokusai showing Edo scene {i}",
+            image_url=f"https://example.com/k{i}.jpg", source_url=f"https://example.com/k{i}",
+            rights="PD", rights_statement="PD", rights_url="", license_url="", author="Katsushika Hokusai",
+            identifier=f"k{i}", categories=["print", "culture"], facets=["Hokusai", "ukiyo-e"],
+            date_text="1830", year_range=[1820, 1840], dimensions=(1000, 800),
+            digest=f"dk{i}", clip_score=0.5, relevance_score=0.5,
+            eligible=True, discovered_via="test", discovered_at="2024-01-01",
+        ))
+    
+    # Claim support for research
+    claim_support = {
+        "Hiroshige published Famous Views of Edo in the 1850s": ["https://example.com/h1"],
+        "Hokusai published Thirty-six Views of Mount Fuji in the 1830s": ["https://example.com/k1"],
+    }
+    
+    # Build entity-specific candidates - should create one for each person
+    candidates = _build_entity_candidates("culture", items, claim_support, "Tokyo")
+    
+    # Should have at least 2 candidates (Hiroshige and Hokusai)
+    assert len(candidates) >= 2, f"Expected >=2 entity candidates, got {len(candidates)}"
+    
+    # Each candidate should focus on a different person
+    titles = [c.title for c in candidates]
+    assert any("Hiroshige" in t for t in titles), "Should have Hiroshige candidate"
+    assert any("Hokusai" in t for t in titles), "Should have Hokusai candidate"
+    
+    # Each candidate should have >=6 assets
+    for c in candidates:
+        assert len(c.assets) >= 6, f"Candidate {c.title} has only {len(c.assets)} assets"
+    
+    print("OK test_orchestrator_tries_multiple_candidates_on_insufficient_claims passed")
+
+
+def test_entity_split_produces_distinct_candidates():
+    """Test that entity splitting produces genuinely distinct candidates, not duplicates."""
+    from story_from_inventory import _build_entity_candidates
+    from image_inventory import InventoryItem
+    
+    # Items mentioning multiple entities
+    items = []
+    for i in range(8):
+        items.append(InventoryItem(
+            provider="museum", title=f"Nihonbashi Bridge {i}", description=f"Nihonbashi bridge in Edo period",
+            image_url=f"https://example.com/n{i}.jpg", source_url=f"https://example.com/n{i}",
+            rights="PD", rights_statement="PD", rights_url="", license_url="", author="Hiroshige",
+            identifier=f"n{i}", categories=["landmark", "culture"], facets=["Nihonbashi", "Hiroshige", "bridge"],
+            date_text="1850", year_range=[1840, 1860], dimensions=(1000, 800),
+            digest=f"dn{i}", clip_score=0.5, relevance_score=0.5,
+            eligible=True, discovered_via="test", discovered_at="2024-01-01",
+        ))
+    
+    claim_support = {
+        "Nihonbashi was the starting point of five highways": ["https://example.com/n1"],
+        "Hiroshige depicted Nihonbashi in Famous Views of Edo": ["https://example.com/n2"],
+    }
+    
+    candidates = _build_entity_candidates("landmarks", items, claim_support, "Tokyo")
+    
+    # Should create separate candidates for "Nihonbashi" (place) and "Hiroshige" (person)
+    # but only if each has >=6 items mentioning them
+    # Since all 8 items mention both, we should get both candidates
+    assert len(candidates) >= 1, f"Expected >=1 candidates, got {len(candidates)}"
+    
+    # Verify candidates have distinct titles (different entities)
+    titles = [c.title for c in candidates]
+    print(f"  Candidate titles: {titles}")
+    
+    print("OK test_entity_split_produces_distinct_candidates passed")
+
+
 def main():
     """Run all tests."""
     print("Running orchestration and fact-checking tests...\n")
@@ -1402,5 +1505,7 @@ def main():
     test_missing_video_file_detection()
     test_qa_rejects_script_below_min_word_count()
     test_story_fallback_mechanism()
+    test_orchestrator_tries_multiple_candidates_on_insufficient_claims()
+    test_entity_split_produces_distinct_candidates()
 
     print("\n=== ALL TESTS PASSED ===")

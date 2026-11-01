@@ -460,10 +460,201 @@ def _score_candidate(theme: str, items: List[InventoryItem],
     )
 
 
+def _group_items_by_entity(items: List[InventoryItem], entity_type: str, entities: List[str]) -> Dict[str, List[InventoryItem]]:
+    """Group inventory items by a specific entity (person, place, event).
+    
+    Returns dict mapping entity name to list of items mentioning that entity.
+    """
+    grouped: Dict[str, List[InventoryItem]] = {}
+    for entity in entities:
+        entity_items = []
+        entity_lower = entity.lower()
+        for item in items:
+            hay = (item.title + " " + item.description + " " + 
+                   " ".join(item.categories) + " " + " ".join(item.facets)).lower()
+            if entity_lower in hay:
+                entity_items.append(item)
+        if entity_items:
+            grouped[entity] = entity_items
+    return grouped
+
+
+def _score_candidate_for_entity(theme: str, items: List[InventoryItem],
+                                entity_type: str, entity_name: str,
+                                claim_support: Dict[str, List[str]],
+                                region_name: str = "") -> StoryCandidate:
+    """Score a candidate story focused on a specific entity within a theme.
+    
+    This is a variant of _score_candidate that creates a candidate for a specific
+    entity (person, place, event) rather than the whole theme cluster.
+    """
+    n = len(items)
+    if n == 0:
+        return StoryCandidate(theme=theme, title=f"{theme.title()} story", summary="", rejection_reason="no_items_for_entity")
+
+    # Evidence strength: fraction of assets with CLIP/relevance score and date evidence.
+    scored = [i for i in items if i.clip_score is not None or i.date_text or i.year_range]
+    evidence_score = min(1.0, len(scored) / max(1, n))
+
+    # Verified claims strength: how many research claims are supported by these assets.
+    claim_texts = set(claim_support.keys()) if claim_support else set()
+    claim_hits = 0
+    for claim in claim_texts:
+        c_low = claim.lower()
+        for i in items:
+            hay = (i.title + " " + i.description).lower()
+            if c_low in hay or any(k in hay for k in c_low.split() if len(k) > 4):
+                claim_hits += 1
+                break
+    claim_score = min(1.0, claim_hits / max(1, len(claim_texts))) if claim_texts else 0.0
+
+    # Asset variety: distinct providers + distinct date spread.
+    providers = {i.provider for i in items}
+    date_spread = len({i.date_text for i in items if i.date_text})
+    asset_variety_score = min(1.0, (len(providers) + date_spread) / 6.0)
+
+    # Coherence: how tightly items cluster around the theme terms.
+    theme_terms = [t for t, _ in THEMES if t == theme]
+    terms = theme_terms[0][1] if theme_terms else []
+    coherent = 0
+    for i in items:
+        hay = (i.title + " " + i.description).lower()
+        if any(t.lower() in hay for t in terms):
+            coherent += 1
+    coherence_score = coherent / max(1, n)
+
+    # Chronological coherence: items cluster within a related time period.
+    periods = {_period_of(i) for i in items}
+    hist_count = sum(1 for i in items if _period_of(i) == "historic")
+    mod_count = sum(1 for i in items if _period_of(i) == "modern")
+    if hist_count + mod_count > 0:
+        chron_score = max(hist_count, mod_count) / (hist_count + mod_count)
+    else:
+        chron_score = 0.5
+
+    # Visual variety: mix of historic and modern periods.
+    visual_variety_score = min(1.0, len(periods) / 2.0)
+
+    # Duration fit: enough assets for ~45-60s video at ~5-7s per scene (8-12 scenes).
+    duration_fit_score = min(1.0, n / 10.0)
+
+    # Extract periods from items for title generation
+    item_entities = _extract_entities_from_items(items, region_name)
+    item_periods = item_entities.get("periods", [])
+
+    # Generate title specific to this entity
+    if entity_type == "people":
+        if entity_name and item_periods:
+            title = f"The {entity_name} Era in {region_name}"
+        else:
+            title = f"{entity_name} and the History of {region_name}"
+    elif entity_type == "places":
+        if entity_name and item_periods:
+            title = f"{entity_name} ({item_periods[0]}) in {region_name}"
+        else:
+            title = f"The History of {entity_name} in {region_name}"
+    elif entity_type == "events":
+        if entity_name and item_periods:
+            title = f"The {entity_name} ({item_periods[0]}) in {region_name}"
+        else:
+            title = f"The {entity_name} in {region_name}"
+    else:
+        title = f"{entity_name} in {region_name}"
+
+    is_specific = bool(entity_name)
+
+    # Reject generic stories that lack a specific historical subject
+    if not is_specific:
+        return StoryCandidate(
+            theme=theme, title=title, summary="",
+            rejection_reason="no_specific_historical_subject"
+        )
+
+    # Narrative themes (events, people, independence) score higher than generic
+    # containers (architecture, landmarks, daily_life) because they imply a story.
+    narrative_themes = {"events", "people", "independence", "conflict", "trade", "transport", "culture"}
+    narrative_bonus = 0.10 if (theme in narrative_themes and is_specific) else 0.0
+
+    total = (0.25 * evidence_score + 0.20 * claim_score +
+             0.15 * asset_variety_score + 0.15 * coherence_score +
+             0.10 * chron_score + 0.05 * visual_variety_score +
+             0.10 * duration_fit_score + narrative_bonus)
+
+    assets = [AssetRef(
+        provider=i.provider, title=i.title, image_url=i.image_url, source_url=i.source_url,
+        rights=i.rights, rights_statement=i.rights_statement, rights_url=i.rights_url,
+        license_url=i.license_url, author=i.author, identifier=i.identifier,
+        date_text=i.date_text, year_range=i.year_range, dimensions=i.dimensions,
+        digest=i.digest, categories=i.categories, facets=i.facets,
+        clip_score=i.clip_score, relevance_score=i.relevance_score,
+        image_type=_period_of(i) if _period_of(i) in ("historic", "modern") else "historic",
+    ) for i in items]
+
+    return StoryCandidate(
+        theme=theme,
+        title=title,
+        summary=f"A {theme}-focused narrative built from {len(items)} {provider_list(assets)} assets about {entity_name}.",
+        assets=assets,
+        evidence_score=evidence_score,
+        asset_variety_score=asset_variety_score,
+        coherence_score=coherence_score,
+        visual_variety_score=visual_variety_score,
+        duration_fit_score=duration_fit_score,
+        total_score=total,
+        claims=list(claim_support.keys()),
+        claim_support=claim_support,
+    )
+
+
 def provider_list(assets: List[AssetRef]) -> str:
     from collections import Counter
     c = Counter(a.provider for a in assets)
     return ", ".join(f"{k}({v})" for k, v in c.most_common(3))
+
+
+def _build_entity_candidates(theme: str, items: List[InventoryItem],
+                             claim_support: Dict[str, List[str]],
+                             region_name: str) -> List[StoryCandidate]:
+    """Build multiple candidates from a theme cluster by splitting on distinct entities.
+    
+    For each entity type (people, places, events), create a separate candidate
+    using only items that mention that entity. This allows multiple researchable
+    stories from the same theme cluster.
+    """
+    entities = _extract_entities_from_items(items, region_name)
+    candidates: List[StoryCandidate] = []
+    
+    # Create candidates for each person entity
+    for person in entities.get("people", []):
+        person_items = [i for i in items if person.lower() in (i.title + " " + i.description + " " + " ".join(i.categories) + " " + " ".join(i.facets)).lower()]
+        if len(person_items) >= 6:  # Minimum assets for a viable story
+            cand = _score_candidate_for_entity(theme, person_items, "people", person, claim_support, region_name)
+            if not cand.rejection_reason:
+                candidates.append(cand)
+    
+    # Create candidates for each place entity
+    for place in entities.get("places", []):
+        place_items = [i for i in items if place.lower() in (i.title + " " + i.description + " " + " ".join(i.categories) + " " + " ".join(i.facets)).lower()]
+        if len(place_items) >= 6:
+            cand = _score_candidate_for_entity(theme, place_items, "places", place, claim_support, region_name)
+            if not cand.rejection_reason:
+                candidates.append(cand)
+    
+    # Create candidates for each event entity
+    for event in entities.get("events", []):
+        event_items = [i for i in items if event.lower() in (i.title + " " + i.description + " " + " ".join(i.categories) + " " + " ".join(i.facets)).lower()]
+        if len(event_items) >= 6:
+            cand = _score_candidate_for_entity(theme, event_items, "events", event, claim_support, region_name)
+            if not cand.rejection_reason:
+                candidates.append(cand)
+    
+    # Fallback: if no entity-specific candidates, create one for the whole cluster
+    if not candidates:
+        cand = _score_candidate(theme, items, claim_support, region_name)
+        if not cand.rejection_reason:
+            candidates.append(cand)
+    
+    return candidates
 
 
 def select_story_candidates(clusters: List[Tuple[str, List[InventoryItem]]],
@@ -473,17 +664,24 @@ def select_story_candidates(clusters: List[Tuple[str, List[InventoryItem]]],
     
     Returns empty list when no candidate has enough assets or sufficient narrative
     coherence to support a 45-60s video.
+    
+    Each theme cluster can now produce multiple candidates by splitting on
+    distinct entities (people, places, events), allowing up to 3 fallback attempts.
     """
     claim_support = claim_support or {}
     candidates: List[StoryCandidate] = []
     rejected_reasons = []
+    
     for theme, items in clusters:
-        cand = _score_candidate(theme, items, claim_support, region_name)
-        if cand.rejection_reason:
-            rejected_reasons.append(f"{theme}: {cand.rejection_reason}")
-        else:
-            candidates.append(cand)
-
+        # Build entity-specific candidates from this cluster
+        entity_candidates = _build_entity_candidates(theme, items, claim_support, region_name)
+        
+        for cand in entity_candidates:
+            if cand.rejection_reason:
+                rejected_reasons.append(f"{theme}/{cand.title}: {cand.rejection_reason}")
+            else:
+                candidates.append(cand)
+    
     # Only stories with enough distinct assets AND sufficient narrative coherence
     # can support a 45-60s video. A generic cluster label is not a story.
     MIN_TOTAL_SCORE = 0.40
@@ -493,7 +691,7 @@ def select_story_candidates(clusters: List[Tuple[str, List[InventoryItem]]],
         if rejected_reasons:
             print(f"  Rejected candidates: {', '.join(rejected_reasons)}")
         return []
-
+    
     viable.sort(key=lambda c: c.total_score, reverse=True)
     return viable
 
