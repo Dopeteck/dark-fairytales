@@ -387,8 +387,33 @@ def main():
     story_selection = load_story(topic["destination_slug"])
     if story_selection is None:
         clusters = cluster_inventory(inventory)
+        
+        # Production diagnostics: log candidate generation details
+        print(f"  Inventory clusters: {len(clusters)} themes")
+        for theme, items in clusters:
+            from story_from_inventory import _extract_entities_from_items, _build_entity_candidates
+            entities = _extract_entities_from_items(items, topic["destination_name"])
+            entity_details = []
+            for etype, elist in entities.items():
+                if elist:
+                    for entity in elist:
+                        # Count assets mentioning this entity
+                        entity_lower = entity.lower()
+                        matched = sum(1 for i in items if entity_lower in (i.title + " " + i.description + " " + i.author + " " + " ".join(i.categories) + " " + " ".join(i.facets)).lower())
+                        entity_details.append(f"{etype}:{entity}({matched} assets)")
+            print(f"    Theme '{theme}': {len(items)} items | Entities: {', '.join(entity_details) if entity_details else 'none'}")
+        
         # Get all viable candidates for fallback attempts
         story_candidates = select_story_candidates(clusters, region_name=topic["destination_name"])
+        
+        # Log candidate generation results
+        if story_candidates:
+            print(f"  Viable entity-specific candidates: {len(story_candidates)}")
+            for c in story_candidates[:3]:
+                print(f"    - {c.title} ({c.theme}, {len(c.assets)} assets, score={c.total_score:.2f})")
+        else:
+            print("  No viable entity-specific candidates; whole-cluster fallback will be attempted")
+        
         if not story_candidates:
             print("ERROR: No supported story could be selected from the inventory.")
             print("  Coverage:", [(c.provider, c.results_returned, c.skipped, c.skip_reason, len(c.errors))
@@ -405,6 +430,7 @@ def main():
             claim_support=story_selection.claim_support,
         )
         story_candidates = [story]
+        print(f"  Using cached story: {story.title} ({story.theme})")
 
     # Try each story candidate (bounded fallback: max 3 attempts)
     MAX_STORY_ATTEMPTS = 3

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,26 @@ from asset_resolver import _norm  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "destination-prototype" / "data"
 STORY_DIR = DATA_DIR / "stories"
+
+
+def _searchable_text(item: InventoryItem, lower: bool = True) -> str:
+    """Build normalized searchable text from all relevant inventory fields.
+
+    This is the single source of truth for entity matching. It includes:
+    - title, description, author
+    - categories, facets
+
+    All fields are concatenated with spaces. By default lowercased for case-insensitive matching.
+    """
+    parts = [
+        item.title or "",
+        item.description or "",
+        item.author or "",
+        " ".join(item.categories or []),
+        " ".join(item.facets or []),
+    ]
+    text = " ".join(parts)
+    return text.lower() if lower else text
 
 # Theme clusters with representative terms. These are discovery aids, not
 # scene templates: an item is assigned to a theme by metadata match only.
@@ -240,9 +261,6 @@ def _extract_entities_from_items(items: List[InventoryItem], region_name: str) -
     Returns dict with keys: people, places, events, periods.
     Only returns entities that appear in multiple assets (consensus).
     """
-    from collections import Counter
-    import re
-
     people = Counter()
     places = Counter()
     events = Counter()
@@ -279,15 +297,15 @@ def _extract_entities_from_items(items: List[InventoryItem], region_name: str) -
     # Add from place_names in config (would need to pass config, for now use region_name)
 
     for item in items:
-        # Include author field for person name extraction
-        text = (item.title + " " + item.description + " " +
-                " ".join(item.categories) + " " + " ".join(item.facets))
-        if item.author:
-            text += " " + item.author
+        # Use shared searchable text helper (includes author, categories, facets)
+        # For person name extraction, use original case to match capitalized patterns
+        text_original = _searchable_text(item, lower=False)
+        # For other matching (periods, etc.), use lowercased
+        text = text_original.lower()
 
-        # Extract person names
+        # Extract person names from original case text
         for pattern in person_patterns:
-            for match in re.finditer(pattern, text):
+            for match in re.finditer(pattern, text_original):
                 name = match.group().strip()
                 name_lower = name.lower()
                 if len(name) > 3 and name_lower not in {"the", "and", "of", "in", "a", "an", "with", "for", "on", "at", "by", "from"}:
@@ -306,7 +324,7 @@ def _extract_entities_from_items(items: List[InventoryItem], region_name: str) -
                     not any(term in word.lower() for term in NON_PERSON_TERMS if len(term) > 4)):
                     people[word] += 1
 
-        # Extract years as periods
+        # Extract years as periods from lowercased text
         for year_match in re.finditer(r'\b(1[0-9]{3}|20[0-2][0-9])\b', text):
             periods[year_match.group()] += 1
 
@@ -626,7 +644,8 @@ def _build_entity_candidates(theme: str, items: List[InventoryItem],
     
     # Create candidates for each person entity
     for person in entities.get("people", []):
-        person_items = [i for i in items if person.lower() in (i.title + " " + i.description + " " + " ".join(i.categories) + " " + " ".join(i.facets)).lower()]
+        person_lower = person.lower()
+        person_items = [i for i in items if person_lower in _searchable_text(i)]
         if len(person_items) >= 6:  # Minimum assets for a viable story
             cand = _score_candidate_for_entity(theme, person_items, "people", person, claim_support, region_name)
             if not cand.rejection_reason:
@@ -634,7 +653,8 @@ def _build_entity_candidates(theme: str, items: List[InventoryItem],
     
     # Create candidates for each place entity
     for place in entities.get("places", []):
-        place_items = [i for i in items if place.lower() in (i.title + " " + i.description + " " + " ".join(i.categories) + " " + " ".join(i.facets)).lower()]
+        place_lower = place.lower()
+        place_items = [i for i in items if place_lower in _searchable_text(i)]
         if len(place_items) >= 6:
             cand = _score_candidate_for_entity(theme, place_items, "places", place, claim_support, region_name)
             if not cand.rejection_reason:
@@ -642,7 +662,8 @@ def _build_entity_candidates(theme: str, items: List[InventoryItem],
     
     # Create candidates for each event entity
     for event in entities.get("events", []):
-        event_items = [i for i in items if event.lower() in (i.title + " " + i.description + " " + " ".join(i.categories) + " " + " ".join(i.facets)).lower()]
+        event_lower = event.lower()
+        event_items = [i for i in items if event_lower in _searchable_text(i)]
         if len(event_items) >= 6:
             cand = _score_candidate_for_entity(theme, event_items, "events", event, claim_support, region_name)
             if not cand.rejection_reason:
