@@ -1639,6 +1639,87 @@ def test_all_candidates_fail_stops_pipeline():
     print("OK test_all_candidates_fail_stops_pipeline passed")
 
 
+def test_canonical_entity_resolution_utagawa_hiroshige():
+    """Test that Utagawa Hiroshige, Hiroshige, and Utagawa aliases resolve to one canonical entity.
+    
+    This reproduces the exact issue from Actions run #257 where three title variations
+    were created for the same artist:
+    - The Utagawa Era in Tokyo
+    - The Utagawa Hiroshige Era in Tokyo  
+    - The Hiroshige Era in Tokyo
+    
+    With proper canonicalization, only one candidate should be created for this artist.
+    """
+    from story_from_inventory import _build_entity_candidates, _extract_entities_from_items, _canonicalize_person_entities
+    from image_inventory import InventoryItem
+    
+    # Test canonicalization function directly
+    canonical = _canonicalize_person_entities(["Utagawa Hiroshige", "Hiroshige", "Utagawa"])
+    assert canonical == ["Utagawa Hiroshige"], f"Expected ['Utagawa Hiroshige'], got {canonical}"
+    
+    # Test with inventory items having different author name variations
+    items = []
+    
+    # Utagawa Hiroshige - 5 items (full name)
+    for i in range(5):
+        items.append(InventoryItem(
+            provider="museum",
+            title=f"Woodblock print {i}",
+            description="Edo period print",
+            image_url=f"https://example.com/h{i}.jpg", source_url=f"https://example.com/h{i}",
+            rights="PD", rights_statement="PD", rights_url="", license_url="",
+            author="Utagawa Hiroshige",
+            identifier=f"h{i}", categories=["print", "culture"], facets=["ukiyo-e"],
+            date_text="1850", year_range=[1840, 1860], dimensions=(1000, 800),
+            digest=f"dh{i}", clip_score=0.5, relevance_score=0.5,
+            eligible=True, discovered_via="test", discovered_at="2024-01-01",
+        ))
+    
+    # Hiroshige - 3 items (surname only)
+    for i in range(3):
+        items.append(InventoryItem(
+            provider="museum",
+            title=f"Woodblock print {i+5}",
+            description="Edo period print",
+            image_url=f"https://example.com/h2_{i}.jpg", source_url=f"https://example.com/h2_{i}",
+            rights="PD", rights_statement="PD", rights_url="", license_url="",
+            author="Hiroshige",
+            identifier=f"h2_{i}", categories=["print", "culture"], facets=["ukiyo-e"],
+            date_text="1850", year_range=[1840, 1860], dimensions=(1000, 800),
+            digest=f"dh2_{i}", clip_score=0.5, relevance_score=0.5,
+            eligible=True, discovered_via="test", discovered_at="2024-01-01",
+        ))
+    
+    # Utagawa - 2 items (family name only, below threshold)
+    for i in range(2):
+        items.append(InventoryItem(
+            provider="museum",
+            title=f"Woodblock print {i+8}",
+            description="Edo period print",
+            image_url=f"https://example.com/u{i}.jpg", source_url=f"https://example.com/u{i}",
+            rights="PD", rights_statement="PD", rights_url="", license_url="",
+            author="Utagawa",
+            identifier=f"u{i}", categories=["print", "culture"], facets=["ukiyo-e"],
+            date_text="1850", year_range=[1840, 1860], dimensions=(1000, 800),
+            digest=f"du{i}", clip_score=0.5, relevance_score=0.5,
+            eligible=True, discovered_via="test", discovered_at="2024-01-01",
+        ))
+    
+    # Extract entities - should canonicalize to single entity
+    entities = _extract_entities_from_items(items, "Tokyo")
+    assert entities["people"] == ["Utagawa Hiroshige"], f"Expected ['Utagawa Hiroshige'], got {entities['people']}"
+    
+    # Build candidates - should create only ONE candidate for this artist
+    candidates = _build_entity_candidates("culture", items, {}, "Tokyo")
+    
+    # Should have exactly 1 candidate (Utagawa Hiroshige), not 3
+    assert len(candidates) == 1, f"Expected 1 candidate for canonicalized artist, got {len(candidates)}: {[c.title for c in candidates]}"
+    assert "Utagawa Hiroshige" in candidates[0].title
+    assert len(candidates[0].assets) == 10  # 5 + 3 + 2 = 10 assets all grouped
+    
+    print("OK test_canonical_entity_resolution_utagawa_hiroshige passed")
+
+
 def main():
     """Run all tests."""
     print("Running orchestration and fact-checking tests...\n")
@@ -1681,5 +1762,6 @@ def main():
     test_entity_split_produces_distinct_candidates()
     test_orchestrator_fallback_integration()
     test_all_candidates_fail_stops_pipeline()
+    test_canonical_entity_resolution_utagawa_hiroshige()
 
     print("\n=== ALL TESTS PASSED ===")

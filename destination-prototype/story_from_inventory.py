@@ -266,13 +266,6 @@ def _extract_entities_from_items(items: List[InventoryItem], region_name: str) -
     events = Counter()
     periods = Counter()
 
-    # Common person name patterns (simplified)
-    person_patterns = [
-        r'\b[A-Z][a-z]+ [A-Z][a-z]+\b',  # First Last
-        r'\b(?:King|Queen|Emperor|Shogun|Sultan|Chief|Governor|President|General|Admiral)\s+[A-Z][a-z]+',
-        r'\b[A-Z][a-z]+ (?:I|II|III|IV|V)\b',  # Monarchs
-    ]
-
     # Terms that look like person names but are actually art metadata / descriptors
     # These should be filtered out from people extraction
     NON_PERSON_TERMS = {
@@ -290,52 +283,116 @@ def _extract_entities_from_items(items: List[InventoryItem], region_name: str) -
         "victoria albert", "art institute", "cleveland museum",
         "smithsonian institution", "library congress", "europeana collections",
         "public domain", "creative commons", "open access", "no known copyright",
+        # Additional false positives observed in production - multi-word phrases
+        "painting japanese", "japanese painting", "art japanese", "japanese art",
+        "color woodblock", "woodblock print", "ukiyo e",
+        # Single words that are never part of person names (for exact match filtering)
+        "woodblock", "ukiyo", "surimono", "shogunate",
     }
 
     # Known place names for the region
     place_names = {region_name.lower()}
-    # Add from place_names in config (would need to pass config, for now use region_name)
 
     for item in items:
-        # Use shared searchable text helper (includes author, categories, facets)
-        # For person name extraction, use original case to match capitalized patterns
-        text_original = _searchable_text(item, lower=False)
-        # For other matching (periods, etc.), use lowercased
-        text = text_original.lower()
-
-        # Extract person names from original case text
-        for pattern in person_patterns:
-            for match in re.finditer(pattern, text_original):
-                name = match.group().strip()
-                name_lower = name.lower()
-                if len(name) > 3 and name_lower not in {"the", "and", "of", "in", "a", "an", "with", "for", "on", "at", "by", "from"}:
-                    # Filter out known non-person terms
-                    if name_lower not in NON_PERSON_TERMS:
-                        # Also filter out if it contains any non-person term as substring
-                        if not any(term in name_lower for term in NON_PERSON_TERMS if len(term) > 4):
-                            people[name] += 1
-
-        # Also extract single-word capitalized names from author field
-        # These are likely to be artist surnames (e.g., "Hiroshige", "Hokusai")
+        # For person names, ONLY use the author field (most reliable in museum metadata)
+        # This avoids false positives from title/description patterns like "Japanese Woodblock"
         if item.author:
-            author_words = item.author.split()
-            for word in author_words:
-                if (len(word) > 3 and word[0].isupper() and word.lower() not in NON_PERSON_TERMS and
-                    not any(term in word.lower() for term in NON_PERSON_TERMS if len(term) > 4)):
-                    people[word] += 1
+            # Extract full name from author (e.g., "Utagawa Hiroshige")
+            author_text = item.author.strip()
+            # Check if it looks like a person name (First Last pattern)
+            if re.match(r'^[A-Z][a-z]+ [A-Z][a-z]+$', author_text):
+                name_lower = author_text.lower()
+                if name_lower not in NON_PERSON_TERMS and not any(re.search(rf'\b{re.escape(term)}\b', name_lower) for term in NON_PERSON_TERMS if len(term) > 4):
+                    people[author_text] += 1
+            else:
+                # Single-word surname (e.g., "Hiroshige", "Hokusai")
+                author_words = author_text.split()
+                for word in author_words:
+                    if (len(word) > 3 and word[0].isupper() and word.lower() not in NON_PERSON_TERMS and
+                        not any(re.search(rf'\b{re.escape(term)}\b', word.lower()) for term in NON_PERSON_TERMS if len(term) > 4)):
+                        people[word] += 1
 
-        # Extract years as periods from lowercased text
+        # Extract years as periods from all searchable text
+        text = _searchable_text(item)
         for year_match in re.finditer(r'\b(1[0-9]{3}|20[0-2][0-9])\b', text):
             periods[year_match.group()] += 1
 
     # Only keep entities that appear in multiple assets (consensus)
     min_occurrences = max(2, len(items) // 3)
+    raw_people = [p for p, c in people.items() if c >= min_occurrences]
+    raw_places = [p for p, c in places.items() if c >= min_occurrences]
+    raw_events = [e for e, c in events.items() if c >= min_occurrences]
+    raw_periods = [p for p, c in periods.items() if c >= min_occurrences]
+    
+    # Canonicalize person entities: map aliases to their fullest form
+    canonical_people = _canonicalize_person_entities(raw_people)
+    
     return {
-        "people": [p for p, c in people.items() if c >= min_occurrences],
-        "places": [p for p, c in places.items() if c >= min_occurrences],
-        "events": [e for e, c in events.items() if c >= min_occurrences],
-        "periods": [p for p, c in periods.items() if c >= min_occurrences],
+        "people": canonical_people,
+        "places": raw_places,
+        "events": raw_events,
+        "periods": raw_periods,
     }
+
+def _canonicalize_person_entities(people: List[str]) -> List[str]:
+    """Canonicalize person entities by mapping aliases to their fullest form.
+    
+    For example: "Hiroshige" and "Utagawa" both map to "Utagawa Hiroshige"
+    if that full name is present. Returns deduplicated list of canonical names.
+    """
+    if not people:
+        return []
+    
+    # Build a mapping from each name to its best canonical form
+    # Strategy: For each person name, find the longest name that contains it
+    # as a word-boundary substring. That longest name is the canonical form.
+    canonical_map = {}
+    people_lower = [p.lower() for p in people]
+    
+    for i, person in enumerate(people):
+        person_lower = people_lower[i]
+        # Find all other names that contain this name as a whole word
+        containing = []
+        for j, other in enumerate(people):
+            if i == j:
+                continue
+            other_lower = people_lower[j]
+            # Check if person_lower appears as a whole word in other_lower
+            # e.g., "hiroshige" in "utagawa hiroshige"
+            if re.search(rf'\b{re.escape(person_lower)}\b', other_lower):
+                containing.append(other)
+        
+        if containing:
+            # Use the longest containing name as canonical
+            canonical = max(containing, key=len)
+            canonical_map[person] = canonical
+        else:
+            # No containing name found, this might be the canonical form itself
+            # Check if this name contains any other name
+            contained = []
+            for j, other in enumerate(people):
+                if i == j:
+                    continue
+                other_lower = people_lower[j]
+                if re.search(rf'\b{re.escape(other_lower)}\b', person_lower):
+                    contained.append(other)
+            if not contained:
+                # This name doesn't contain others and isn't contained - it's canonical
+                canonical_map[person] = person
+            else:
+                # This name contains others - it's the canonical form
+                canonical_map[person] = person
+    
+    # Deduplicate by canonical form
+    seen_canonical = set()
+    result = []
+    for person in people:
+        canonical = canonical_map.get(person, person)
+        if canonical not in seen_canonical:
+            seen_canonical.add(canonical)
+            result.append(canonical)
+    
+    return result
 
 
 def _generate_specific_title(theme: str, entities: Dict[str, List[str]], region_name: str) -> Tuple[str, bool]:
@@ -488,9 +545,7 @@ def _group_items_by_entity(items: List[InventoryItem], entity_type: str, entitie
         entity_items = []
         entity_lower = entity.lower()
         for item in items:
-            hay = (item.title + " " + item.description + " " + 
-                   " ".join(item.categories) + " " + " ".join(item.facets)).lower()
-            if entity_lower in hay:
+            if entity_lower in _searchable_text(item):
                 entity_items.append(item)
         if entity_items:
             grouped[entity] = entity_items
@@ -638,36 +693,54 @@ def _build_entity_candidates(theme: str, items: List[InventoryItem],
     For each entity type (people, places, events), create a separate candidate
     using only items that mention that entity. This allows multiple researchable
     stories from the same theme cluster.
+    
+    Deduplicates candidates by canonical subject identity and asset overlap.
     """
     entities = _extract_entities_from_items(items, region_name)
     candidates: List[StoryCandidate] = []
+    seen_asset_digests: Set[str] = set()  # Track assets used by candidates
     
     # Create candidates for each person entity
     for person in entities.get("people", []):
         person_lower = person.lower()
         person_items = [i for i in items if person_lower in _searchable_text(i)]
         if len(person_items) >= 6:  # Minimum assets for a viable story
+            # Check asset overlap with existing candidates
+            person_digests = {i.digest for i in person_items if i.digest}
+            if person_digests and person_digests & seen_asset_digests:
+                # This entity's assets significantly overlap with existing candidate
+                # Skip to avoid duplicate subject
+                continue
             cand = _score_candidate_for_entity(theme, person_items, "people", person, claim_support, region_name)
             if not cand.rejection_reason:
                 candidates.append(cand)
+                seen_asset_digests.update(person_digests)
     
     # Create candidates for each place entity
     for place in entities.get("places", []):
         place_lower = place.lower()
         place_items = [i for i in items if place_lower in _searchable_text(i)]
         if len(place_items) >= 6:
+            place_digests = {i.digest for i in place_items if i.digest}
+            if place_digests and place_digests & seen_asset_digests:
+                continue
             cand = _score_candidate_for_entity(theme, place_items, "places", place, claim_support, region_name)
             if not cand.rejection_reason:
                 candidates.append(cand)
+                seen_asset_digests.update(place_digests)
     
     # Create candidates for each event entity
     for event in entities.get("events", []):
         event_lower = event.lower()
         event_items = [i for i in items if event_lower in _searchable_text(i)]
         if len(event_items) >= 6:
+            event_digests = {i.digest for i in event_items if i.digest}
+            if event_digests and event_digests & seen_asset_digests:
+                continue
             cand = _score_candidate_for_entity(theme, event_items, "events", event, claim_support, region_name)
             if not cand.rejection_reason:
                 candidates.append(cand)
+                seen_asset_digests.update(event_digests)
     
     # Fallback: if no entity-specific candidates, create one for the whole cluster
     if not candidates:
@@ -898,10 +971,31 @@ def generate_story_narration(story: StoryCandidate, scenes: List[Dict[str, Any]]
         for claim in filtered_claims[1:1 + max(0, len(scenes) - 1)]:
             lines.append(claim)
     else:
-        # No verified claims: minimal honest narration about the collection.
-        # Do NOT invent a story or use generic filler.
-        lines.append(f"Historical records from {story.assets[0].provider if story.assets else 'archives'} document {story.title.lower()}.")
-        # Use only the first scene's asset as illustration, don't invent narrative.
+        # No verified claims yet: generate research-anchored narration from inventory metadata.
+        # This provides specific factual hooks (dates, names, titles) for the research system
+        # to investigate, without asserting unverified claims.
+        # Extract unique dates, artist names, and titles from story assets.
+        dates = sorted({a.date_text for a in story.assets if a.date_text})
+        authors = sorted({a.author for a in story.assets if a.author})
+        titles = sorted({a.title for a in story.assets if a.title})
+        
+        # Build a narration that describes what the inventory contains,
+        # framed as research questions rather than assertions.
+        if authors:
+            lines.append(f"Records from {story.assets[0].provider if story.assets else 'archives'} document {story.title.lower()}, "
+                         f"featuring works by {', '.join(authors[:3])}.")
+        else:
+            lines.append(f"Historical records from {story.assets[0].provider if story.assets else 'archives'} document {story.title.lower()}.")
+        
+        if dates:
+            date_str = ", ".join(dates[:5])
+            lines.append(f"These materials span {date_str}.")
+        
+        if titles:
+            title_samples = ", ".join(titles[:3])
+            lines.append(f"Key records include {title_samples}.")
+        
+        # Mention the visual evidence without asserting specific depictions.
         if scenes:
             asset = scenes[0].get("asset_metadata", {})
             lines.append(
