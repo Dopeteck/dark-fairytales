@@ -871,6 +871,130 @@ def test_download_concurrent_semaphore_limit():
     print("OK test_download_concurrent_semaphore_limit passed")
 
 
+def test_norm_import_and_deduplication():
+    """Test that _norm is imported and plan_scenes_from_story deduplicates by title."""
+    from story_from_inventory import _norm, plan_scenes_from_story, StoryCandidate, AssetRef
+    from image_inventory import InventoryItem
+
+    # Test _norm normalizes case and diacritics (whitespace is preserved by design)
+    assert _norm('Tokyo') == 'tokyo'
+    assert _norm('TOKYO') == 'tokyo'
+    assert _norm('  Tokyo  ') == '  tokyo  '  # whitespace preserved
+    assert _norm('The Caricaturist') == 'the caricaturist'
+    assert _norm('the caricaturist') == 'the caricaturist'
+
+    # Create inventory items with duplicate titles (different case)
+    item1 = InventoryItem(
+        provider="museum",
+        title="The Caricaturist",
+        description="A caricaturist at work",
+        image_url="https://example.com/1.jpg",
+        source_url="https://example.com/1",
+        rights="PD",
+        rights_statement="PD",
+        rights_url="",
+        license_url="",
+        author="T. Rowlandson",
+        identifier="digest1",
+        categories=["art"],
+        facets=[],
+        date_text="1800",
+        year_range=None,
+        dimensions=(100, 100),
+        digest="digest1",
+        clip_score=0.5,
+        relevance_score=0.5,
+        eligible=True,
+        discovered_via="test",
+        discovered_at="2024-01-01",
+    )
+    item2 = InventoryItem(
+        provider="museum",
+        title="the caricaturist",
+        description="A caricaturist at work",
+        image_url="https://example.com/2.jpg",
+        source_url="https://example.com/2",
+        rights="PD",
+        rights_statement="PD",
+        rights_url="",
+        license_url="",
+        author="T. Rowlandson",
+        identifier="digest2",
+        categories=["art"],
+        facets=[],
+        date_text="1800",
+        year_range=None,
+        dimensions=(100, 100),
+        digest="digest2",
+        clip_score=0.5,
+        relevance_score=0.5,
+        eligible=True,
+        discovered_via="test",
+        discovered_at="2024-01-01",
+    )
+    item3 = InventoryItem(
+        provider="museum",
+        title="Different Asset",
+        description="A different artwork",
+        image_url="https://example.com/3.jpg",
+        source_url="https://example.com/3",
+        rights="PD",
+        rights_statement="PD",
+        rights_url="",
+        license_url="",
+        author="Someone Else",
+        identifier="digest3",
+        categories=["art"],
+        facets=[],
+        date_text="1800",
+        year_range=None,
+        dimensions=(100, 100),
+        digest="digest3",
+        clip_score=0.5,
+        relevance_score=0.5,
+        eligible=True,
+        discovered_via="test",
+        discovered_at="2024-01-01",
+    )
+
+    # Create a mock inventory object
+    class MockInventory:
+        region_slug = "test"
+        region_name = "Test"
+        country = "Test"
+        items = [item1, item2, item3]
+
+    inventory = MockInventory()
+
+    # Create a story with assets that have duplicate titles (different case)
+    story = StoryCandidate(
+        theme="people",
+        title="Test Story",
+        summary="Test",
+        assets=[
+            AssetRef(provider="museum", title="The Caricaturist", image_url="https://example.com/1.jpg", source_url="https://example.com/1", rights="PD", rights_statement="PD", rights_url="", license_url="", author="T. Rowlandson", identifier="digest1", date_text="1800", year_range=None, dimensions=(100,100), digest="digest1", categories=[], facets=[], clip_score=0.5, relevance_score=0.5, image_type="historic"),
+            AssetRef(provider="museum", title="the caricaturist", image_url="https://example.com/2.jpg", source_url="https://example.com/2", rights="PD", rights_statement="PD", rights_url="", license_url="", author="T. Rowlandson", identifier="digest2", date_text="1800", year_range=None, dimensions=(100,100), digest="digest2", categories=[], facets=[], clip_score=0.5, relevance_score=0.5, image_type="historic"),
+            AssetRef(provider="museum", title="Different Asset", image_url="https://example.com/3.jpg", source_url="https://example.com/3", rights="PD", rights_statement="PD", rights_url="", license_url="", author="Someone Else", identifier="digest3", date_text="1800", year_range=None, dimensions=(100,100), digest="digest3", categories=[], facets=[], clip_score=0.5, relevance_score=0.5, image_type="historic"),
+        ],
+        claims=[],
+        claim_support={},
+    )
+
+    scenes = plan_scenes_from_story(story, inventory)
+
+    # Should only have 2 scenes: "The Caricaturist" (first one) and "Different Asset"
+    # The second "the caricaturist" should be deduplicated
+    assert len(scenes) == 2, f"Expected 2 scenes after deduplication, got {len(scenes)}"
+    scene_titles = [s['title'] for s in scenes]
+    assert "The Caricaturist" in scene_titles
+    assert "Different Asset" in scene_titles
+    # Ensure we don't have both "The Caricaturist" and "the caricaturist"
+    caricaturist_count = sum(1 for t in scene_titles if 'caricaturist' in t.lower())
+    assert caricaturist_count == 1, f"Expected 1 caricaturist scene, got {caricaturist_count}"
+
+    print("OK test_norm_import_and_deduplication passed")
+
+
 def main():
     """Run all tests."""
     print("Running orchestration and fact-checking tests...\n")
@@ -897,5 +1021,6 @@ def main():
     test_download_semaphore_not_exhausted_on_repeated_failures()
     test_download_read_timeout_retry()
     test_download_concurrent_semaphore_limit()
+    test_norm_import_and_deduplication()
 
     print("\n=== ALL TESTS PASSED ===")

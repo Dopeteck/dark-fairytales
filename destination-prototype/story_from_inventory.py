@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from image_inventory import (  # noqa: E402
     RegionInventory, InventoryItem, eligible_items, items_by_theme,
 )
+from asset_resolver import _norm  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "destination-prototype" / "data"
