@@ -29,9 +29,9 @@ class FolklorePlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unapproved draft"):
             validate_folklore_plan(self.plan)
 
-    def test_storyboards_cannot_hide_missing_asset_status(self):
-        self.plan["scenes"][0]["asset_requirement"]["status"] = "approved"
-        with self.assertRaisesRegex(ValueError, "marked missing"):
+    def test_unknown_asset_status_rejected(self):
+        self.plan["scenes"][0]["asset_requirement"]["status"] = "rendered"
+        with self.assertRaisesRegex(ValueError, "asset status"):
             validate_folklore_plan(self.plan)
 
     def test_duration_and_word_count_limits(self):

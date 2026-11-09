@@ -20,6 +20,7 @@ from moviepy.video.VideoClip import VideoClip
 from captions import build_ass
 from destination_history import load_asset_manifest, validate_destination_plan, credits_text
 from destination_render import render_frame_array, validate_render_inputs
+from folklore_plan import validate_folklore_plan
 from tts import Narrator, RATE, tone
 from story_store import write_json
 
@@ -72,6 +73,8 @@ def render_plan(plan_path: Path, manifest_path: Path, asset_root: Path, output: 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     if layout:
         plan["layout"] = layout
+    if plan.get("format") == "dark_folklore_documentary":
+        plan = validate_folklore_plan(plan)
     plan = validate_destination_plan(plan)
     manifest = load_asset_manifest(manifest_path)
     assets = validate_render_inputs(plan, manifest, asset_root)

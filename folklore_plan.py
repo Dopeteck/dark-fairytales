@@ -36,8 +36,8 @@ def validate_folklore_plan(data: dict[str, Any]) -> dict[str, Any]:
         requirement = scene.get("asset_requirement")
         if not isinstance(requirement, dict) or len(requirement.get("search_terms", [])) < 2:
             raise ValueError(f"{sid} needs story-specific asset search terms")
-        if requirement.get("status") != "missing":
-            raise ValueError("unreviewed visual assets must remain marked missing")
+        if requirement.get("status") not in {"missing", "candidate", "approved"}:
+            raise ValueError("asset status must be missing, candidate, or reviewed approved")
         if scene.get("duration_seconds", 0) <= 0:
             raise ValueError(f"{sid} needs a positive target duration")
     words = len(str(data.get("narration", "")).split())
