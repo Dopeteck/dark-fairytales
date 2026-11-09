@@ -469,6 +469,7 @@ def _display_scale(w, h):
 def _size_ok(im, cfg):
     w, h = im.size
     if min(w, h) < int(cfg.get("min_short_side", 600)): return False
+    if max(w, h) < int(cfg.get("min_long_side", 0)): return False
     if w / h > 3.0 or h / w > 3.0: return False
     return _display_scale(w, h) <= float(cfg.get("max_upscale", 1.25))
 
@@ -571,6 +572,31 @@ def _commons_search(query):
           m.get("Artist",{}).get("value",""),p.get("pageid",""),cats,date_text)
         if c: c["width"]=ii.get("width",0); c["height"]=ii.get("height",0); c["_from_search"]=True; out.append(c)
     return out
+
+def _commons_file_candidate(file_title):
+    """Fetch an exact Commons seed through the official API and normalize it like search results."""
+    title = str(file_title or "").strip()
+    if not title: return None
+    if not title.startswith("File:"): title = "File:" + title
+    payload = _get("https://commons.wikimedia.org/w/api.php", {
+        "action": "query", "format": "json", "titles": title, "prop": "imageinfo",
+        "iiprop": "url|extmetadata|size", "iiurlwidth": 2400,
+    })
+    page = next(iter(payload.get("query", {}).get("pages", {}).values()), {})
+    if "missing" in page: return None
+    info = (page.get("imageinfo") or [{}])[0]
+    meta = info.get("extmetadata") or {}
+    def value(key):
+        item = meta.get(key)
+        return item.get("value", "") if isinstance(item, dict) else ""
+    date_text = " ".join(str(value(k)) for k in ("DateTimeOriginal", "DateTime", "ObjectDate") if value(k))
+    candidate = _candidate("Wikimedia Commons", page.get("title", title), value("ImageDescription"),
+        info.get("url"), info.get("descriptionurl"), value("LicenseShortName"), value("LicenseUrl"),
+        value("Artist"), page.get("pageid", ""), date_text=date_text)
+    if candidate:
+        candidate.update({"width": int(info.get("width") or 0), "height": int(info.get("height") or 0),
+                          "seed_file_title": title})
+    return candidate
 
 def _loc_rights(x):
     item = x.get("item") if isinstance(x.get("item"), dict) else {}
@@ -1028,6 +1054,14 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
     per_provider = int(scene.get("max_queries_per_provider", rcfg.get("max_queries_per_provider", 3)))
     candidates = []
     clip_top = []
+    review_candidates = []
+    provider_source_urls = set()
+    rights_pass_sources = set()
+    size_pass_sources = set()
+    clip_pass_sources = set()
+    gate_counts = {"provider_returned": 0, "rights_pass_unique": 0,
+                   "metadata_relevance_pass": 0, "size_duplicate_pass": 0,
+                   "clip_visual_relevance_pass": 0}
     # Commons categories: place-aware first, then entity categories (e.g. "Edo Castle").
     for name in dict.fromkeys(([place] if scene.get("image_type") == "modern" else []) + entities[:2]):
         if not name: continue
@@ -1046,6 +1080,17 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
         except Exception as e:
             PROVIDER_ERRORS["commons_category"] = f"{type(e).__name__}: {e}"[:200]; s_["errors"].append(PROVIDER_ERRORS["commons_category"])
             print(f"Commons category '{cat}' unavailable: {e}")
+    seed_status = st("commons_seed")
+    for file_title in scene.get("seed_commons_files", []) or []:
+        try:
+            seeded = _commons_file_candidate(file_title)
+            seed_status["queries"] += 1
+            if seeded:
+                candidates.append(seeded); seed_status["returned"] += 1
+            else:
+                seed_status["errors"].append(f"Not found or rights metadata rejected: {file_title}")
+        except Exception as e:
+            seed_status["errors"].append(f"{file_title}: {type(e).__name__}: {e}"[:200])
     for provider in providers:
         name = provider.__name__; s_ = st(name)
         for query in queries[:per_provider]:
@@ -1073,10 +1118,17 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
             PROVIDER_ERRORS["commons_search"] = f"{type(e).__name__}: {e}"[:200]; s_["errors"].append(PROVIDER_ERRORS["commons_search"])
             print(f"Commons text search unavailable for {query!r}: {e}")
 
+    provider_source_urls = {c.get("source_url") for c in candidates if c.get("source_url")}
+    gate_counts["provider_returned"] = len(provider_source_urls)
+
     def diagnostics():
         return {"queries": queries, "providers_found": dict(FOUND), "provider_status": status, "rejected": dict(STATS),
                 "top_rejected": list(TOP_REJECTED), "clip_top": clip_top, "provider_errors": dict(PROVIDER_ERRORS),
-                "ocr_available": _ocr_available()}
+                "ocr_available": _ocr_available(), "gate_counts": dict(gate_counts),
+                "provider_source_urls": sorted(provider_source_urls),
+                "rights_pass_source_urls": sorted(rights_pass_sources),
+                "size_pass_source_urls": sorted(size_pass_sources),
+                "clip_pass_source_urls": sorted(clip_pass_sources)}
     pinned = scene.get("pinned_image")
     if pinned:
         candidates = [c for c in candidates if c.get("source_url") == pinned or c.get("image_url") == pinned]
@@ -1101,6 +1153,7 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
         if not _rights_ok(c["rights_statement"]): _note_reject("rights", c, {"rights": c["rights_statement"][:100]}); continue
         if _needs_attribution(c["rights_statement"]) and not _has_author(c.get("author", "")):
             _note_reject("attribution", c, {"rights": c["rights_statement"][:60]}); continue
+        rights_pass_sources.add(key)
         text = _clean(" ".join([c.get("title", ""), c.get("description", ""), " ".join(_as_list(c.get("categories")))]))   # strip any HTML a provider left in
         m = BANNED.search(text)
         matched = m.group(0) if m else _find_term(text, banned_terms)
@@ -1149,6 +1202,8 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
         if missing:
             _note_reject("subject_groups", c, {"missing_group_indexes": missing, "checked_text": hay[:160]}); continue
         unique[key] = c
+    gate_counts["rights_pass_unique"] = len(rights_pass_sources)
+    gate_counts["metadata_relevance_pass"] = len(unique)
     candidates = sorted(unique.values(), key=lambda c: -c["_hits"])
     if not candidates:
         raise ResolverError(f"No licensed candidates discovered for scene '{scene['title']}'.", diagnostics())
@@ -1174,6 +1229,8 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
             _note_reject("download", c, {"error": f"{type(e).__name__}: {e}"[:120]})
     if not ranked:
         raise ResolverError(f"No candidates passed explicit-rights, image-format, size and duplicate gates for '{scene['title']}'.", diagnostics())
+    size_pass_sources.update(c["source_url"] for c in ranked)
+    gate_counts["size_duplicate_pass"] = len(size_pass_sources)
     # Rank all surviving candidates with a compact CLIP model on CPU, using short natural prompts.
     prompts = build_clip_prompts(scene, config)
     try:
@@ -1209,6 +1266,8 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
     # Semantic image relevance must dominate metadata keyword frequency. Keyword hits are a discovery filter, not a score bonus.
     survivors.sort(key=lambda c: (c["_p_modern"] < 0.5, c["_score"]), reverse=True) if scene.get("image_type") == "historic" else survivors.sort(key=lambda c: c["_score"], reverse=True)
     top = survivors[:int(rcfg.get("top_candidates", 5))]
+    gate_counts["clip_visual_relevance_pass"] = sum(1 for c in survivors if c["_score"] >= threshold)
+    clip_pass_sources.update(c["source_url"] for c in survivors if c["_score"] >= threshold)
     print(f"CLIP candidates for {scene['title']}: " + ", ".join(f"{x['provider']}={x['_score']:.3f}" for x in top))
     winner = next((c for c in top if c["_score"] >= threshold), None)
     if winner is None:
@@ -1216,6 +1275,38 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
         if not survivors:
             raise ResolverError(f"Every downloaded candidate was rejected by the document/period/date gates for '{scene['title']}'.", diagnostics())
         raise ResolverError(f"No image scored >= {threshold:.2f} with CLIP for '{scene['title']}'. Use configured map/text-card fallback; do not substitute a weak image.", diagnostics())
+    review_dir = rcfg.get("review_candidates_dir")
+    if review_dir:
+        from urllib.parse import urlparse
+        extensions = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "TIFF": ".tif"}
+        scene_key = re.sub(r"[^A-Za-z0-9._-]+", "_", str(scene.get("id") or f"scene-{idx:02d}"))[:80]
+        target_dir = Path(review_dir) / scene_key
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for rank, c in enumerate((x for x in top if x["_score"] >= threshold), 1):
+            decoded = Image.open(io.BytesIO(c["_bytes"]))
+            ext = extensions.get(decoded.format, Path(urlparse(c["image_url"]).path).suffix.lower() or ".img")
+            dest = target_dir / f"candidate-{rank:02d}{ext}"
+            dest.write_bytes(c["_bytes"])
+            review_candidates.append({
+                "candidate_id": f"{scene_key}-{rank:02d}-{c['_digest'][:12]}",
+                "scene_id": str(scene.get("id") or f"scene-{idx:02d}"), "rank": rank,
+                "file": str(dest), "title": c["title"], "description": c.get("description", ""),
+                "author": c.get("author", "Not stated"), "publication_date": c.get("date_text", ""),
+                "source_url": c["source_url"], "image_url": c["image_url"],
+                "rights_statement": c["rights_statement"], "rights_url": c["rights_url"],
+                "provider": c["provider"], "dimensions": list(c["_size"]),
+                "file_sha256": hashlib.sha256(c["_bytes"]).hexdigest(),
+                "decoded_pixels_sha256": c["_digest"], "byte_size": len(c["_bytes"]),
+                "clip_score": round(float(c["_score"]), 6),
+                "p_document": round(float(c["_p_doc"]), 6),
+                "p_modern": round(float(c["_p_modern"]), 6),
+                "visual_metadata": {"categories": c.get("categories", []), "facets": c.get("facets", []),
+                                    "date_text": c.get("date_text", ""), "identifier": c.get("identifier", "")},
+                "automatic_checks": {"rights": "passed", "format": "passed", "resolution": "passed",
+                                     "duplicate": "passed", "ocr": "passed" if use_ocr else "unavailable",
+                                     "clip_threshold": threshold, "clip_relevance": "passed"},
+                "approved": False, "review_status": "candidate_passed_automatic_gates",
+            })
     data = winner["_bytes"]; im = Image.open(io.BytesIO(data)).convert("RGB")
     filename = f"scene_{idx:02d}.jpg"; path = Path(asset_dir) / filename; im.save(path, quality=94)
     used.add(winner["_digest"]); used.add(winner["source_url"])
@@ -1224,9 +1315,11 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
     return im, {"content_sha256": winner["_digest"], "scene": scene["title"], "file": str(path),
       "title": winner["title"], "author": winner["author"], "license": winner["rights_statement"],
       "rights": winner["rights_statement"], "rights_statement": winner["rights_statement"], "license_url": winner["rights_url"],
-      "asset_url": winner["source_url"], "source_url": winner["source_url"], "provider": winner["provider"], "match_score": winner["_score"],
+      "asset_url": winner["source_url"], "source_url": winner["source_url"], "image_url": winner["image_url"],
+      "rights_url": winner["rights_url"], "provider": winner["provider"], "match_score": winner["_score"],
+      "original_file_sha256": hashlib.sha256(data).hexdigest(), "original_byte_size": len(data),
       "clip_score": winner["_score"], "period_ok": (winner["_p_modern"] >= 0.5) if scene.get("image_type") == "modern" else None,
       "search_variant": "CLIP ranked: " + " | ".join(prompts), "warnings": warnings, "dimensions": list(winner["_size"]),
       "top_candidates": [{"provider": x["provider"], "title": x["title"], "source_url": x["source_url"],
                           "rights_statement": x["rights_statement"], "clip_score": x["_score"]} for x in top],
-      "diagnostics": diagnostics()}
+      "review_candidates": review_candidates, "diagnostics": diagnostics()}
