@@ -107,6 +107,27 @@ class StoryIdentityTests(unittest.TestCase):
         self.assertTrue(scene["banned_keywords"])
 
 
+    def test_story_identity_without_beat_metadata_is_not_beat_coverage(self):
+        source_only = candidate(
+            "The Blue Fairy Book, page 97",
+            categories=["Blue Fairy Book/Rumpelstiltzkin"],
+        )
+        self.assertEqual(policy.classify_candidate(source_only, "beat-03-first-bargains"),
+                         "exact_story_illustration")
+        status, missing = policy.exact_scene_match_status(source_only, "beat-03-first-bargains")
+        self.assertEqual(status, "story_identity_only_unplaced")
+        self.assertTrue(missing)
+
+    def test_scene_specific_story_title_can_be_assigned_to_correct_beat(self):
+        spinning_wheel = candidate(
+            "Rumpelstiltskin at the Spinning-Wheel and the Dwarf MET DP827694",
+        )
+        status, missing = policy.exact_scene_match_status(spinning_wheel, "beat-03-first-bargains")
+        self.assertEqual(status, "metadata_scene_match")
+        self.assertEqual(missing, [])
+        threat_status, _ = policy.exact_scene_match_status(spinning_wheel, "beat-01-threat")
+        self.assertEqual(threat_status, "story_identity_only_unplaced")
+
 class CoverageTests(unittest.TestCase):
     def test_coverage_never_counts_context_as_exact_or_duplicate_as_usable(self):
         beats = [
@@ -127,6 +148,8 @@ class CoverageTests(unittest.TestCase):
         # The first candidate is explicitly classified as exact to model the
         # review script's accepted candidate record.
         beats[0]["candidates"][0]["visual_role"] = "exact_story_illustration"
+        beats[0]["candidates"][0]["scene_match_status"] = "metadata_scene_match"
+        beats[3]["candidates"][0]["scene_match_status"] = "story_identity_only_unplaced"
         result = policy.summarize_visual_coverage(beats)
         self.assertEqual(result["beats_with_exact_story_illustrations"], 1)
         self.assertEqual(result["beats_with_suitable_symbolic_assets"], 1)
