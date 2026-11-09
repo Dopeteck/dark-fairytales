@@ -228,7 +228,7 @@ class ExistingGuardrailTests(unittest.TestCase):
             plan_path.write_text(json.dumps(plan), encoding="utf-8")
             output = tmp / "review"
             file_path = output / "candidate-files" / "beat-03-exact" / "candidate.jpg"
-            first = candidate("Rumpelstiltskin at the spinning wheel",
+            first = candidate("Rumpelstiltskin at the spinning wheel with the dwarf",
                               categories=["Rumpelstilzchen (1812, Grimm)"])
             first.update({
                 "candidate_id": "first", "file": str(file_path),
