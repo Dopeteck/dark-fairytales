@@ -88,8 +88,8 @@ def validate_destination_plan(data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(sources, list) or not sources:
             raise ValueError(f"scene {sid} needs at least one source id")
         duration = raw.get("duration_seconds")
-        if not isinstance(duration, (int, float)) or not 2 <= duration <= 4:
-            raise ValueError(f"scene {sid} duration must be 2–4 seconds")
+        if not isinstance(duration, (int, float)) or not 2 <= duration <= 8:
+            raise ValueError(f"scene {sid} duration must be 2–8 seconds")
         normalized.append({**raw, "duration_seconds": float(duration)})
     total = sum(x["duration_seconds"] for x in normalized)
     if not 45 <= total <= 60:

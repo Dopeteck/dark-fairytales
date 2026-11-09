@@ -23,7 +23,7 @@ from destination_render import render_frame_array, validate_render_inputs
 from tts import Narrator, RATE, tone
 from story_store import write_json
 
-FPS = 24
+FPS = 30
 
 
 def _run(args: list[str], cwd: Path) -> None:

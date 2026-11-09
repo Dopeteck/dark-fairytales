@@ -28,6 +28,13 @@ class DestinationHistoryTests(unittest.TestCase):
         data=plan(); data["scenes"][0]["duration_seconds"]=1
         with self.assertRaises(ValueError): validate_destination_plan(data)
 
+    def test_six_second_story_beats_fit_short_form_timing(self):
+        data=plan()
+        data["scenes"]=[{"id":f"s{i}","type":"still_kenburns","duration_seconds":5.5,
+                         "narration":"A sourced narration beat.","source_ids":["source"]}
+                        for i in range(9)]
+        self.assertEqual(validate_destination_plan(data)["duration_seconds"],49.5)
+
     def test_unknown_license_rejected(self):
         asset={"source_url":"https://example.org/image","rights_statement":"CC BY 4.0","rights_url":"https://example.org/rights","author":"A",
                "license":"unknown","date_retrieved":"2026-10-17",
