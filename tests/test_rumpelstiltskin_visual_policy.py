@@ -137,6 +137,33 @@ class CoverageTests(unittest.TestCase):
 
 
 class ExistingGuardrailTests(unittest.TestCase):
+    def test_commons_seed_fetch_keeps_edition_category_provenance(self):
+        payload = {"query": {"pages": {"1": {
+            "pageid": 1,
+            "title": "File:The Blue Fairy Book, p. 97.jpg",
+            "imageinfo": [{
+                "url": "https://upload.wikimedia.org/example/p97.jpg",
+                "descriptionurl": "https://commons.wikimedia.org/wiki/File:The_Blue_Fairy_Book,_p._97.jpg",
+                "width": 1602,
+                "height": 2151,
+                "extmetadata": {
+                    "ImageDescription": {"value": "Illustration from The Blue Fairy Book"},
+                    "LicenseShortName": {"value": "Public domain"},
+                    "LicenseUrl": {"value": "https://creativecommons.org/publicdomain/mark/1.0/"},
+                    "Artist": {"value": "Henry Justice Ford"},
+                },
+            }],
+            "categories": [{"title": "Category:Blue Fairy Book/Rumpelstiltzkin"}],
+        }}}}
+        with patch.object(ar, "_get", return_value=payload) as mocked:
+            record = ar._commons_file_candidate("The Blue Fairy Book, p. 97.jpg")
+        self.assertIsNotNone(record)
+        self.assertIn("Blue Fairy Book/Rumpelstiltzkin", record["categories"])
+        self.assertEqual(record["width"], 1602)
+        params = mocked.call_args.args[1]
+        self.assertIn("categories", params["prop"])
+        self.assertEqual(params["cllimit"], 30)
+
     def test_rights_and_source_resolution_gates_remain_strict(self):
         self.assertTrue(ar._rights_ok("Public Domain"))
         self.assertTrue(ar._rights_ok("CC0 1.0"))
