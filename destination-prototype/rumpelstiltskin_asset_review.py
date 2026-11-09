@@ -161,10 +161,12 @@ def _seed_review(seed: dict, out: Path, config: dict) -> dict:
     try:
         c = ar._commons_file_candidate(seed["file_title"])
         if not c:
-            return {**base, "review_status": "rejected_or_uncertain_rights_metadata", "rights_status": "not accepted by existing rights gate"}
+            return {**base, "review_status": "rejected_or_uncertain_rights_metadata",
+                    "rights_status": "not accepted by existing rights gate"}
         base.update({"title": c["title"], "author": c["author"], "publication_date": c.get("date_text", ""),
                      "image_url": c["image_url"], "rights_statement": c["rights_statement"],
                      "rights_url": c["rights_url"], "original_dimensions": [c.get("width"), c.get("height")],
+                     "categories": c.get("categories", []),
                      "rights_status": "passed existing resolver rights gate"})
         data = ar._download(c)
         digest = hashlib.sha256(data).hexdigest()
@@ -182,13 +184,16 @@ def _seed_review(seed: dict, out: Path, config: dict) -> dict:
         file_path.write_bytes(data)
         rights_ok = ar._rights_ok(c["rights_statement"]) and (not ar._needs_attribution(c["rights_statement"]) or ar._has_author(c.get("author", "")))
         status = ("eligible_seed_pending_scene_relevance" if size_ok else "rejected_source_resolution") if rights_ok else "rejected_or_uncertain_rights"
+        role, label = _story_role({**base, "visual_metadata": {"categories": c.get("categories", [])}}, seed["scene_id"])
         return {**base, "file": str(file_path), "dimensions": dims, "file_sha256": digest,
                 "decoded_pixels_sha256": decoded, "byte_size": len(data),
                 "resolution_status": "passed" if size_ok else "rejected: source below 1920×1080 requirement",
                 "rights_status": "passed existing resolver rights gate" if rights_ok else "rejected or uncertain under existing rights gate",
-                "review_status": status, "rights_statement": c["rights_statement"], "approved": False}
+                "review_status": status, "rights_statement": c["rights_statement"],
+                "visual_role": role, "visual_role_label": label, "approved": False}
     except Exception as exc:
-        return {**base, "review_status": "uncertain_download_or_decode", "error": f"{type(exc).__name__}: {exc}"}
+        return {**base, "review_status": "uncertain_download_or_decode",
+                "error": f"{type(exc).__name__}: {exc}"}
 
 
 def run(plan_path: Path, out: Path) -> dict[str, Any]:
