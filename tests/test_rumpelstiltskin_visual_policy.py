@@ -8,11 +8,16 @@ from unittest.mock import patch
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "destination-prototype"))
+DESTINATION_PATH = str(ROOT / "destination-prototype")
+sys.path.insert(0, DESTINATION_PATH)
 
 import asset_resolver as ar
 import rumpelstiltskin_asset_review as asset_review
 import rumpelstiltskin_visual_policy as policy
+
+# Do not leave the prototype directory ahead of the repository root: these
+# tests also run with the root scene_planner module in the same unittest pass.
+sys.path.remove(DESTINATION_PATH)
 
 
 def candidate(title, description="", categories=None, clip_score=0.99, role=None,
