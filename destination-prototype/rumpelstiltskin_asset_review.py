@@ -199,6 +199,7 @@ def _seed_review(seed: dict, out: Path, config: dict) -> dict:
 def run(plan_path: Path, out: Path) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     out.mkdir(parents=True, exist_ok=True)
+    out = out.resolve()
     resolver_cfg = {"providers": list(ar.DEFAULT_PROVIDERS), "max_queries": 6,
                     "max_queries_per_provider": 2, "max_downloads": 20,
                     "top_candidates": 3, "min_short_side": 1080,
@@ -217,8 +218,10 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
                   "queries": scene["image_search_terms"], "status": "no_qualified_candidate",
                   "approved": False, "candidates": [], "diagnostics": {}}
         try:
+            resolver_preview_dir = out / "resolver-jpegs" / scene["id"]
+            resolver_preview_dir.mkdir(parents=True, exist_ok=True)
             _, resolved = ar.resolve_scene_image(scene, index, config,
-                out / "resolver-jpegs" / scene["id"], used, out)
+                resolver_preview_dir, used, out)
             diag = resolved["diagnostics"]
             result["diagnostics"] = diag
             result["status"] = "candidates_available"
