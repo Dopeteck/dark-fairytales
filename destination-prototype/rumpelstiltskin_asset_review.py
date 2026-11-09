@@ -240,116 +240,246 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     out.mkdir(parents=True, exist_ok=True)
     out = out.resolve()
-    resolver_cfg = {"providers": list(ar.DEFAULT_PROVIDERS), "max_queries": 6,
-                    "max_queries_per_provider": 2, "max_downloads": 20,
+    resolver_cfg = {"providers": list(ar.DEFAULT_PROVIDERS), "max_queries": 8,
+                    "max_queries_per_provider": 3, "max_downloads": 24,
                     "top_candidates": 3, "min_short_side": 1080,
                     "min_long_side": 1920, "max_upscale": 1.25,
                     "review_candidates_dir": str((out / "candidate-files").resolve())}
     config = {"name": "The Grimm tale Rumpelstiltskin", "asset_resolver": resolver_cfg,
-              "image_banned_terms": ["book cover", "title page", "frontispiece", "scanned page", "text page", "page scan", "catalogue page", "exhibition poster", "plate list", "contents page", "pdf", "djvu", "document scan", "report cover"]}
+              "image_banned_terms": ["book cover", "title page", "frontispiece", "scanned page",
+                                     "text page", "page scan", "catalogue page", "exhibition poster",
+                                     "plate list", "contents page", "pdf", "djvu", "document scan",
+                                     "report cover"]}
     seed_images = [_seed_review(seed, out, config) for seed in SEEDS]
     used: set[str] = set()
-    results, candidates_by_scene = [], {}
+    results, candidates_by_scene, rejected_by_scene = [], {}, {}
     all_sources = {"provider": set(), "rights": set(), "size": set(), "clip": set()}
     rejected, resolver_errors = [], []
+
     for index, raw in enumerate(plan.get("scenes", []), 1):
-        scene = review_scene(raw, index)
-        result = {"scene_id": scene["id"], "beat_title": raw.get("title", scene["id"]),
-                  "queries": scene["image_search_terms"], "status": "no_qualified_candidate",
-                  "approved": False, "candidates": [], "diagnostics": {}}
-        try:
-            resolver_preview_dir = out / "resolver-jpegs" / scene["id"]
-            resolver_preview_dir.mkdir(parents=True, exist_ok=True)
-            _, resolved = ar.resolve_scene_image(scene, index, config,
-                resolver_preview_dir, used, out)
-            diag = resolved["diagnostics"]
-            result["diagnostics"] = diag
-            result["status"] = "candidates_available"
-            for key, field in (("provider", "provider_source_urls"), ("rights", "rights_pass_source_urls"),
-                               ("size", "size_pass_source_urls"), ("clip", "clip_pass_source_urls")):
-                all_sources[key].update(diag.get(field, []))
-            for candidate in resolved.get("review_candidates", []):
-                candidate["file"] = str(Path(candidate["file"]).relative_to(out.resolve()))
-                role, label = _story_role(candidate)
-                candidate.update({"visual_role": role, "visual_role_label": label})
-                candidate["beat_title"] = raw.get("title", scene["id"])
-                candidate["approved"] = False
-                result["candidates"].append(candidate)
-            result["selected_candidate_id"] = result["candidates"][0]["candidate_id"] if result["candidates"] else None
-            candidates_by_scene[scene["id"]] = result["candidates"]
-        except Exception as exc:
-            diag = getattr(exc, "diagnostics", {})
-            result["diagnostics"] = diag
-            if isinstance(diag, dict):
-                for key, field in (("provider", "provider_source_urls"), ("rights", "rights_pass_source_urls"),
-                                   ("size", "size_pass_source_urls"), ("clip", "clip_pass_source_urls")):
+        sid = str(raw["id"])
+        beat_candidates: list[dict[str, Any]] = []
+        beat_rejections: list[dict[str, Any]] = []
+        diagnostics_by_mode: dict[str, Any] = {}
+        errors_by_mode: dict[str, str] = {}
+        queries_by_mode: dict[str, list[str]] = {}
+
+        # Exact story discovery comes first. Symbolic search is run only when
+        # the beat has no story-identified image after all existing gates.
+        for visual_mode in ("exact", "symbolic"):
+            if visual_mode == "symbolic" and any(
+                c.get("visual_role") == "exact_story_illustration" for c in beat_candidates
+            ):
+                break
+            scene = review_scene(raw, index, visual_mode)
+            queries_by_mode[visual_mode] = scene.get("image_search_terms", [])
+            try:
+                resolver_preview_dir = out / "resolver-jpegs" / scene["id"]
+                resolver_preview_dir.mkdir(parents=True, exist_ok=True)
+                _, resolved = ar.resolve_scene_image(scene, index, config,
+                    resolver_preview_dir, used, out)
+                diag = resolved.get("diagnostics", {})
+                diagnostics_by_mode[visual_mode] = diag
+                for key, field in (("provider", "provider_source_urls"),
+                                   ("rights", "rights_pass_source_urls"),
+                                   ("size", "size_pass_source_urls"),
+                                   ("clip", "clip_pass_source_urls")):
                     all_sources[key].update(diag.get(field, []))
-                rejected.extend({"scene_id": scene["id"], **x} for x in diag.get("top_rejected", []))
-                resolver_errors.extend({"scene_id": scene["id"], "provider": k, "error": v}
-                                       for k, v in diag.get("provider_errors", {}).items())
-            result["error"] = f"{type(exc).__name__}: {exc}"
-            candidates_by_scene[scene["id"]] = []
+
+                for candidate in resolved.get("review_candidates", []):
+                    candidate["file"] = str(Path(candidate["file"]).relative_to(out.resolve()))
+                    role, label = _story_role(candidate, sid)
+                    candidate.update({
+                        "story_beat_id": sid,
+                        "visual_mode": visual_mode,
+                        "visual_role": role,
+                        "visual_role_label": label,
+                        "beat_title": raw.get("title", sid),
+                        "approved": False,
+                    })
+                    if role == "exact_story_illustration":
+                        beat_candidates.append(candidate)
+                    elif role == "symbolic_contextual_asset" and visual_mode == "symbolic":
+                        beat_candidates.append(candidate)
+                    else:
+                        item = {
+                            "scene_id": sid,
+                            "visual_mode": visual_mode,
+                            "visual_role": "unrelated_contextual_art",
+                            "reason": "candidate metadata did not establish story identity or all beat-specific symbolic requirements",
+                            "title": candidate.get("title", ""),
+                            "source_url": candidate.get("source_url", ""),
+                            "clip_score": candidate.get("clip_score"),
+                            "approved": False,
+                        }
+                        beat_rejections.append(item)
+                        rejected.append(item)
+
+            except Exception as exc:
+                diag = getattr(exc, "diagnostics", {})
+                diagnostics_by_mode[visual_mode] = diag if isinstance(diag, dict) else {}
+                errors_by_mode[visual_mode] = f"{type(exc).__name__}: {exc}"
+                if isinstance(diag, dict):
+                    for key, field in (("provider", "provider_source_urls"),
+                                       ("rights", "rights_pass_source_urls"),
+                                       ("size", "size_pass_source_urls"),
+                                       ("clip", "clip_pass_source_urls")):
+                        all_sources[key].update(diag.get(field, []))
+                    for item in diag.get("top_rejected", []):
+                        marker_role = visual_policy.classify_candidate(
+                            {"title": item.get("title", ""),
+                             "description": item.get("checked_text", "")}, sid)
+                        entry = {
+                            "scene_id": sid,
+                            "visual_mode": visual_mode,
+                            **item,
+                            "visual_role": marker_role,
+                        }
+                        beat_rejections.append(entry)
+                        rejected.append(entry)
+                    resolver_errors.extend({"scene_id": sid, "visual_mode": visual_mode,
+                                             "provider": k, "error": v}
+                                            for k, v in diag.get("provider_errors", {}).items())
+
+        result = {
+            "scene_id": sid,
+            "beat_title": raw.get("title", sid),
+            "queries_by_mode": queries_by_mode,
+            "status": "candidates_available" if beat_candidates else "no_usable_visual",
+            "approved": False,
+            "candidates": beat_candidates,
+            "diagnostics_by_mode": diagnostics_by_mode,
+            "errors_by_mode": errors_by_mode,
+            "rejected_or_uncertain": beat_rejections,
+        }
+        candidates_by_scene[sid] = beat_candidates
+        rejected_by_scene[sid] = beat_rejections
         results.append(result)
 
-    # Dedupe the contact board's candidate records by decoded pixels across all beats.
-    seen_pixels = {}
-    unique_count = 0
+    # Deduplicate across beats/modes by decoded RGB pixels. Duplicates never
+    # contribute to exact or symbolic coverage.
+    seen_pixels: dict[str, str] = {}
     for result in results:
+        retained = []
         for candidate in result["candidates"]:
             digest = candidate.get("decoded_pixels_sha256")
             if digest and digest in seen_pixels:
                 candidate["review_status"] = "rejected_duplicate"
                 candidate["duplicate_of"] = seen_pixels[digest]
                 candidate["approved"] = False
-            elif digest:
-                seen_pixels[digest] = candidate["candidate_id"]
-                unique_count += 1
-    for sid in candidates_by_scene:
-        candidates_by_scene[sid] = [c for c in candidates_by_scene[sid] if c.get("review_status") != "rejected_duplicate"]
+                entry = {
+                    "scene_id": result["scene_id"],
+                    "visual_role": candidate.get("visual_role"),
+                    "reason": "duplicate decoded pixels",
+                    "title": candidate.get("title", ""),
+                    "source_url": candidate.get("source_url", ""),
+                    "duplicate_of": seen_pixels[digest],
+                    "approved": False,
+                }
+                rejected.append(entry)
+                rejected_by_scene[result["scene_id"]].append(entry)
+                continue
+            if digest:
+                seen_pixels[digest] = candidate.get("candidate_id", digest)
+            retained.append(candidate)
+        result["candidates"] = retained
+        candidates_by_scene[result["scene_id"]] = retained
 
-    # Attach relevance outcome for the two supplied seeds based on resolver diagnostics.
     for seed in seed_images:
-        clip_urls = all_sources["clip"]
-        matching = next((c for r in results for c in r["candidates"] if c.get("source_url") == seed.get("source_url")), None)
+        matching = next((c for r in results for c in r["candidates"]
+                         if c.get("source_url") == seed.get("source_url")), None)
         if matching:
-            seed["relevance_status"] = "passed CLIP threshold in " + matching["scene_id"]
-        elif seed.get("source_url") in all_sources["size"]:
-            seed["relevance_status"] = "not independently scored as a review-board candidate"
+            seed["relevance_status"] = "passed CLIP and visual metadata checks in " + matching["story_beat_id"]
         else:
-            seed["relevance_status"] = "not passed to CLIP (source-size or earlier gate); inspect rejection details"
+            seed["relevance_status"] = "seed only; not counted as beat coverage without passing resolver CLIP and visual checks"
 
+    coverage = visual_policy.summarize_visual_coverage(results)
+    uncovered_ids = coverage["uncovered_beat_ids"]
     summary = {
         "beats": len(results),
+        **coverage,
         "assets_found_unique_source_pages": len(all_sources["provider"]),
         "unique_source_pages_passed_rights_and_attribution": len(all_sources["rights"]),
         "unique_source_pages_passed_resolution_format_ocr_and_duplicate_gates": len(all_sources["size"]),
         "unique_source_pages_passed_clip_relevance_threshold": len(all_sources["clip"]),
-        "unique_candidate_visual_files_for_human_review": unique_count,
-        "beats_with_qualified_candidates": sum(bool(x["candidates"]) for x in results),
-        "beats_uncovered": [x["beat_title"] for x in results if not x["candidates"]],
+        "unique_candidate_visual_files_for_human_review": sum(len(r["candidates"]) for r in results),
+        "unrelated_or_uncertain_search_results_rejected": len(rejected),
         "all_candidates_approved": False,
         "clip_threshold": 0.22,
         "source_size_gate": "short side >= 1080 px; long side >= 1920 px; existing max-upscale <= 1.25; no enlargement performed",
-        "style_assessment": "Human visual review required; contextual art is labelled and is not represented as a documented Rumpelstiltskin scene.",
+        "coverage_interpretation": "Only exact story illustrations and beat-matched symbolic assets count. A CLIP pass or a generic contextual image never counts by itself.",
+        "recommendation": (
+            "The nine-beat episode is not visually supported yet; keep the script unrendered and either find more tale-specific illustrations or choose a better-illustrated tale."
+            if uncovered_ids else
+            "Every beat has an automatically qualified exact or symbolic visual; human review and approval are still required."
+        ),
     }
-    manifest = {"project": plan.get("series"), "episode": plan.get("title"),
-                "source_story_edition": plan.get("version_scope"), "summary": summary,
-                "provider_scope": ["Wikimedia Commons official API", "The Metropolitan Museum of Art Open Access API",
-                                  "Art Institute of Chicago Open Access", "Cleveland Museum of Art Open Access",
-                                  "National Gallery of Art API", "Library of Congress API"],
-                "seeds": seed_images, "beats": results, "rejected_or_uncertain": rejected,
-                "provider_errors": resolver_errors,
-                "review_rules": {"approved": False, "manual_approval_required": True,
-                                 "licensing": "existing asset_resolver rights allowlist; no unknown, NC, or ND terms",
-                                 "clip": "existing score/document/period thresholds unchanged",
-                                 "resolution": "source image dimensions only; no upscaling"}}
-    (out / "provenance-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    create_contact_sheet(plan, candidates_by_scene, seed_images, out / "contact-sheet.jpg")
+    manifest = {
+        "project": plan.get("series"),
+        "episode": plan.get("title"),
+        "source_story_edition": plan.get("version_scope"),
+        "summary": summary,
+        "provider_scope": [
+            "Wikimedia Commons official API (including edition-specific story categories)",
+            "The Metropolitan Museum of Art Open Access API",
+            "Art Institute of Chicago Open Access",
+            "Cleveland Museum of Art Open Access",
+            "National Gallery of Art API",
+            "Library of Congress API",
+        ],
+        "visual_policy": {
+            "exact_story_illustration": "Rumpelstiltskin/Rumpelstilzchen or a documented historical title alias must appear in source metadata/categories; CLIP alone cannot establish identity.",
+            "symbolic_contextual_asset": "Must pass every beat-specific metadata keyword group and the existing CLIP threshold; is never described as a literal scene from the tale.",
+            "unrelated_contextual_art": "Fails story-identity and symbolic requirements or matches an unrelated-subject marker; excluded from coverage.",
+            "unverified_story_identity": "Metadata without a story identity anchor is rejected from exact coverage even when CLIP passes.",
+        },
+        "seeds": seed_images,
+        "beats": results,
+        "rejected_or_uncertain": rejected,
+        "provider_errors": resolver_errors,
+        "review_rules": {
+            "approved": False,
+            "manual_approval_required": True,
+            "licensing": "existing asset_resolver rights allowlist and attribution gate unchanged",
+            "clip": "existing score/document/period thresholds unchanged",
+            "resolution": "existing source-size/upscale gate unchanged; no enlargement",
+            "ocr": "existing OCR/text-heavy gate retained",
+            "duplicates": "deduplicated by decoded RGB pixel hash across all beats",
+        },
+    }
+    (out / "provenance-manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    create_contact_sheet(plan, candidates_by_scene, seed_images,
+                         out / "contact-sheet.jpg", rejected_by_scene)
+
+    report = [
+        "# Rumpelstiltskin visual coverage report",
+        "",
+        f"- Beats with exact story illustrations: **{coverage['beats_with_exact_story_illustrations']}/{len(results)}**",
+        f"- Beats with suitable symbolic assets: **{coverage['beats_with_suitable_symbolic_assets']}/{len(results)}**",
+        f"- Beats with any automatically qualified visual: **{coverage['beats_with_any_automatic_candidates']}/{len(results)}**",
+        f"- Beats lacking a usable visual: **{coverage['beats_lacking_usable_visual']}/{len(results)}**",
+        "",
+        "## Exact story illustration beats",
+        *([f"- {x}" for x in coverage["exact_story_illustration_beat_ids"]] or ["- None"]),
+        "",
+        "## Symbolic asset beats",
+        *([f"- {x}" for x in coverage["symbolic_asset_beat_ids"]] or ["- None"]),
+        "",
+        "## Uncovered beats",
+        *([f"- {x}" for x in uncovered_ids] or ["- None"]),
+        "",
+        "No asset is approved. Do not render until a human approves relevant, provenance-complete visuals for every beat.",
+        "",
+        summary["recommendation"],
+    ]
+    (out / "coverage-report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
     (out / "README.txt").write_text(
-        "Private review artifact. Every item is an unapproved candidate.\n"
-        "Candidate images passed the existing automatic rights, resolution, OCR/document, duplicate and CLIP checks.\n"
-        "Seed images may be shown separately with a rejection status and are not cleared for rendering.\n"
-        "See provenance-manifest.json for exact source file URL, source page, rights URL, creator, dates, dimensions, hashes, scores and rejection diagnostics.\n",
+        "Review artifact only. No image is approved and no MP4 was rendered.\n"
+        "Exact story illustrations require a Rumpelstiltskin story identity anchor in source metadata.\n"
+        "Symbolic assets must satisfy every beat-specific metadata requirement and the existing CLIP threshold.\n"
+        "Unrelated, unverified, low-resolution, text-heavy, duplicate, rights-failing, or CLIP-failing material is rejected or reported as uncertain.\n"
+        "See provenance-manifest.json and coverage-report.md for honest counts and source provenance.\n",
         encoding="utf-8")
     return manifest
 
