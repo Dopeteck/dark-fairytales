@@ -39,10 +39,8 @@ jobs:
           python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -r requirements.txt
       - name: Run full offline regression suites
-        env:
-          PYTHONPATH: destination-prototype:.
         run: |
-          python -m unittest discover -s destination-prototype -p 'test_*.py' -v
+          PYTHONPATH=destination-prototype python -m unittest discover -s destination-prototype -p 'test_*.py' -v
           python -m unittest discover -s tests -v
       - name: Search, download, validate, and build review board
         env:
