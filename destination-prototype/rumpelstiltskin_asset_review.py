@@ -21,11 +21,15 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 import asset_resolver as ar
+import rumpelstiltskin_visual_policy as visual_policy
 
 SEEDS = [
     {"file_title": "Rumpelstiltskin at the Spinning-Wheel and the Dwarf MET DP827694.jpg",
      "scene_id": "beat-03-first-bargains",
      "source_url": "https://commons.wikimedia.org/wiki/File:Rumpelstiltskin_at_the_Spinning-Wheel_and_the_Dwarf_MET_DP827694.jpg"},
+    {"file_title": "The Blue Fairy Book, p. 97.jpg",
+     "scene_id": "beat-03-first-bargains",
+     "source_url": "https://commons.wikimedia.org/wiki/File:The_Blue_Fairy_Book,_p._97.jpg"},
     {"file_title": "GrimmsGoblins-140-Rumpelstiltskin.jpg",
      "scene_id": "beat-09-foot-revelation",
      "source_url": "https://commons.wikimedia.org/wiki/File:GrimmsGoblins-140-Rumpelstiltskin.jpg"},
@@ -42,28 +46,13 @@ SEARCH_TERMS = {
     "beat-08-forest-fire": ["Rumpelstiltskin dancing fire forest hut", "Rumpelstilzchen Feuer Waldhütte tanzend", "Rumpel-Stilts-Kin fire Grimm's Goblins"],
     "beat-09-foot-revelation": ["Rumpelstiltskin foot stuck floor ending", "Rumpelstilzchen Fuß Boden steckt Ende", "George Cruikshank Rumpel-Stilts-Kin Grimm's Goblins 1876"],
 }
-ALIASES = ("rumpelstiltskin", "rumpelstilzchen", "rumpel-stilts-kin", "rumpel-stiltskin")
+ALIASES = tuple(visual_policy.STORY_ALIASES)
 
 
-def review_scene(raw: dict[str, Any], index: int) -> dict[str, Any]:
+def review_scene(raw: dict[str, Any], index: int, visual_mode: str = "exact") -> dict[str, Any]:
     sid = str(raw["id"])
-    req = raw.get("asset_requirement") or {}
-    terms = list(dict.fromkeys(SEARCH_TERMS.get(sid, []) + list(req.get("search_terms", []))))
-    visual = str(req.get("must_show", ""))
     seed_files = [x["file_title"] for x in SEEDS if x["scene_id"] == sid]
-    return {
-        "id": sid,
-        "title": raw.get("title", sid),
-        "image_type": "historic",
-        "image_search_terms": terms,
-        "visual_tags": [visual, "Rumpelstiltskin / Rumpelstilzchen historical fairy-tale illustration"],
-        "visual_caption": f"A historical storybook illustration: {visual}",
-        "narration_intent": f"{raw.get('evidence', '')} Visual subject: {visual}",
-        "required_keywords": list(dict.fromkeys([*ALIASES, "spinning", "spinning wheel", "spinnrad", "straw", "gold", "miller", "king", "queen", "dwarf", "child", "name", "fire", "forest", "foot", "floor"])),
-        "seed_commons_files": seed_files,
-        "max_queries": 8,
-        "max_queries_per_provider": 2,
-    }
+    return visual_policy.build_review_scene(raw, index, visual_mode, seed_files)
 
 
 def _font(size: int, bold: bool = False):
@@ -87,13 +76,14 @@ def _wrap(draw, text: str, font, width: int) -> list[str]:
     return lines
 
 
-def _story_role(candidate: dict[str, Any]) -> tuple[str, str]:
-    text = ar._norm(" ".join([candidate.get("title", ""), candidate.get("description", ""),
-                               " ".join(candidate.get("visual_metadata", {}).get("categories", [])),
-                               " ".join(candidate.get("visual_metadata", {}).get("facets", []))]))
-    if any(alias in text for alias in ALIASES):
-        return "exact_story_illustration", "Exact story illustration (source metadata identifies Rumpelstiltskin / Rumpelstilzchen)."
-    return "contextual_historical_art", "Contextual historical art; metadata does not identify this documented story scene."
+def _story_role(candidate: dict[str, Any], beat_id: str) -> tuple[str, str]:
+    role = visual_policy.classify_candidate(candidate, beat_id)
+    labels = {
+        "exact_story_illustration": "Exact story illustration — source metadata identifies this tale",
+        "symbolic_contextual_asset": "Suitable symbolic asset — required visual objects/settings match",
+        "unrelated_contextual_art": "Rejected — unrelated or unverified context",
+    }
+    return role, labels[role]
 
 
 def _candidate_cell(canvas: Image.Image, box: tuple[int, int, int, int], record: dict[str, Any], beat_title: str,
