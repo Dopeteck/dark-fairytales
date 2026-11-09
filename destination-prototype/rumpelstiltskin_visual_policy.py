@@ -228,16 +228,17 @@ def summarize_visual_coverage(beats: list[dict[str, Any]]) -> dict[str, Any]:
             c for c in beat.get("candidates", [])
             if c.get("review_status") != "rejected_duplicate" and c.get("approved") is False
         ]
-        roles = {c.get("visual_role") for c in candidates}
-        if any(
+        exact_usable = any(
             c.get("visual_role") == "exact_story_illustration"
             and c.get("scene_match_status") == "metadata_scene_match"
             for c in candidates
-        ):
+        )
+        symbolic_usable = any(c.get("visual_role") == "symbolic_contextual_asset" for c in candidates)
+        if exact_usable:
             exact_ids.append(beat_id)
-        if "symbolic_contextual_asset" in roles:
+        if symbolic_usable:
             symbolic_ids.append(beat_id)
-        if roles.intersection({"exact_story_illustration", "symbolic_contextual_asset"}):
+        if exact_usable or symbolic_usable:
             any_ids.append(beat_id)
         else:
             uncovered.append(beat_id)
