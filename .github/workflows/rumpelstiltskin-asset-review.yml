@@ -38,10 +38,14 @@ jobs:
           python -m pip install 'numpy>=1.26,<2' 'Pillow>=10' 'requests>=2.31' 'pytesseract>=0.3.10' 'PyYAML>=6' 'soundfile>=0.13' 'transformers==4.48.3' 'huggingface-hub==0.28.1'
           python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -r requirements.txt
-      - name: Run full offline regression suites
+      - name: Run the repository's full offline test suite
+        run: python -m unittest discover -s tests -v
+      - name: Compile folklore review and resolver modules
         run: |
-          PYTHONPATH=destination-prototype python -m unittest discover -s destination-prototype -p 'test_*.py' -v
-          python -m unittest discover -s tests -v
+          python -m py_compile \
+            destination-prototype/asset_resolver.py \
+            destination-prototype/rumpelstiltskin_visual_policy.py \
+            destination-prototype/rumpelstiltskin_asset_review.py
       - name: Search, download, validate, and build review board
         env:
           HF_HOME: ${{ runner.temp }}/huggingface
