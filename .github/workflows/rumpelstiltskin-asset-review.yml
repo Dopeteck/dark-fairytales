@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rumpelstiltskin-asset-review-${{ github.ref }}
+  group: rumpelstiltskin-asset-review-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
