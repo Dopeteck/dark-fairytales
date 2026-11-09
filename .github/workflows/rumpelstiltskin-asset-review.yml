@@ -1,6 +1,14 @@
 name: Rumpelstiltskin visual asset review
 
 on:
+  push:
+    branches:
+      - feature/dark-folklore-shorts
+    paths:
+      - 'destination-prototype/asset_resolver.py'
+      - 'destination-prototype/rumpelstiltskin_asset_review.py'
+      - 'research/rumpelstiltskin-pilot.json'
+      - '.github/workflows/rumpelstiltskin-asset-review.yml'
   workflow_dispatch:
 
 permissions:
