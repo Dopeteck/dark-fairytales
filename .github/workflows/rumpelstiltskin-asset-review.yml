@@ -7,6 +7,8 @@ on:
     paths:
       - 'destination-prototype/asset_resolver.py'
       - 'destination-prototype/rumpelstiltskin_asset_review.py'
+      - 'destination-prototype/rumpelstiltskin_visual_policy.py'
+      - 'tests/test_rumpelstiltskin_visual_policy.py'
       - 'research/rumpelstiltskin-pilot.json'
       - '.github/workflows/rumpelstiltskin-asset-review.yml'
   workflow_dispatch:
@@ -33,8 +35,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr
           python -m pip install --upgrade pip
-          python -m pip install 'numpy>=1.26,<2' 'Pillow>=10' 'requests>=2.31' 'pytesseract>=0.3.10' 'transformers==4.48.3' 'huggingface-hub==0.28.1'
+          python -m pip install 'numpy>=1.26,<2' 'Pillow>=10' 'requests>=2.31' 'pytesseract>=0.3.10' 'PyYAML>=6' 'soundfile>=0.13' 'transformers==4.48.3' 'huggingface-hub==0.28.1'
           python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+      - name: Run full offline regression suites
+        env:
+          PYTHONPATH: destination-prototype:.
+        run: |
+          python -m unittest discover -s destination-prototype -p 'test_*.py' -v
+          python -m unittest discover -s tests -v
       - name: Search, download, validate, and build review board
         env:
           HF_HOME: ${{ runner.temp }}/huggingface
@@ -43,7 +52,7 @@ jobs:
           python destination-prototype/rumpelstiltskin_asset_review.py
           --plan research/rumpelstiltskin-pilot.json
           --output output/rumpelstiltskin-asset-review
-      - name: Upload private review artifact
+      - name: Upload unapproved review artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
