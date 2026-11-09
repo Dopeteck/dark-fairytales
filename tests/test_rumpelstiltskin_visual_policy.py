@@ -17,7 +17,8 @@ import rumpelstiltskin_visual_policy as policy
 
 # Do not leave the prototype directory ahead of the repository root: these
 # tests also run with the root scene_planner module in the same unittest pass.
-sys.path.remove(DESTINATION_PATH)
+while DESTINATION_PATH in sys.path:
+    sys.path.remove(DESTINATION_PATH)
 
 
 def candidate(title, description="", categories=None, clip_score=0.99, role=None,
