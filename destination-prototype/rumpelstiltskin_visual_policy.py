@@ -39,6 +39,19 @@ UNRELATED_SUBJECT_MARKERS = (
 
 # Every group must have at least one metadata match. These are deliberately
 # conservative; an empty result is preferable to using unrelated historical art.
+EXACT_SCENE_REQUIREMENTS: dict[str, list[list[str]]] = {
+    "beat-01-threat": [["king", "king's room", "king threatens"], ["daughter", "miller's daughter"]],
+    "beat-02-boast": [["miller", "miller's"], ["daughter", "miller's daughter"]],
+    "beat-03-first-bargains": [["spinning wheel", "spinning-wheel", "spinnrad"], ["dwarf", "little man", "imp"]],
+    "beat-04-king-demands": [["king", "könig"], ["straw", "spinning wheel", "spinnrad"]],
+    "beat-05-child-pact": [["first child", "child bargain", "promise of the child", "promises her child"]],
+    "beat-06-claim": [["queen", "königin"], ["infant", "baby", "newborn", "child"]],
+    "beat-07-three-days": [["name", "guess his name", "naming"], ["messenger", "herald", "courier", "bote"]],
+    "beat-08-forest-fire": [["forest", "woods", "woodland", "wald"], ["fire", "bonfire", "flames", "feuer"], ["dancing", "dance", "dancing on one leg"]],
+    "beat-09-foot-revelation": [["foot", "feet", "fuß"], ["floor", "floorboards", "wooden floor", "boden"]],
+}
+
+
 SYMBOLIC_REQUIREMENTS: dict[str, list[list[str]]] = {
     "beat-01-threat": [
         ["straw", "straw bundle", "Stroh"],
@@ -124,6 +137,23 @@ def candidate_metadata_text(candidate: dict[str, Any]) -> str:
     return _normalise(" ".join(str(v) for v in values if v is not None))
 
 
+def exact_scene_match_status(candidate: dict[str, Any], beat_id: str) -> tuple[str, list[str]]:
+    """Check whether exact-story metadata also identifies this beat's visual.
+
+    Story identity and beat identity are different facts. A book-category hit
+    proves tale provenance, but a generic category alone cannot place an image
+    in a particular narrated scene.
+    """
+    text = candidate_metadata_text(candidate)
+    groups = EXACT_SCENE_REQUIREMENTS.get(beat_id, [])
+    missing = [
+        " / ".join(group)
+        for group in groups
+        if not any(_contains(text, term) for term in group)
+    ]
+    return ("metadata_scene_match", []) if not missing else ("story_identity_only_unplaced", missing)
+
+
 def classify_candidate(candidate: dict[str, Any], beat_id: str) -> str:
     """Return exact, relevant-symbolic, or unrelated based on source metadata.
 
@@ -199,7 +229,11 @@ def summarize_visual_coverage(beats: list[dict[str, Any]]) -> dict[str, Any]:
             if c.get("review_status") != "rejected_duplicate" and c.get("approved") is False
         ]
         roles = {c.get("visual_role") for c in candidates}
-        if "exact_story_illustration" in roles:
+        if any(
+            c.get("visual_role") == "exact_story_illustration"
+            and c.get("scene_match_status") == "metadata_scene_match"
+            for c in candidates
+        ):
             exact_ids.append(beat_id)
         if "symbolic_contextual_asset" in roles:
             symbolic_ids.append(beat_id)
@@ -207,7 +241,15 @@ def summarize_visual_coverage(beats: list[dict[str, Any]]) -> dict[str, Any]:
             any_ids.append(beat_id)
         else:
             uncovered.append(beat_id)
+    unplaced_exact = [
+        c for beat in beats for c in beat.get("candidates", [])
+        if c.get("visual_role") == "exact_story_illustration"
+        and c.get("scene_match_status") == "story_identity_only_unplaced"
+        and c.get("review_status") != "rejected_duplicate"
+    ]
     return {
+        "story_identified_illustrations_without_verified_beat_placement": len(unplaced_exact),
+        "unplaced_story_illustration_titles": list(dict.fromkeys(str(c.get("title", "")) for c in unplaced_exact)),
         "beats_with_exact_story_illustrations": len(exact_ids),
         "exact_story_illustration_beat_ids": exact_ids,
         "beats_with_suitable_symbolic_assets": len(symbolic_ids),
