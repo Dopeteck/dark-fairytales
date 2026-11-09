@@ -579,8 +579,8 @@ def _commons_file_candidate(file_title):
     if not title: return None
     if not title.startswith("File:"): title = "File:" + title
     payload = _get("https://commons.wikimedia.org/w/api.php", {
-        "action": "query", "format": "json", "titles": title, "prop": "imageinfo",
-        "iiprop": "url|extmetadata|size", "iiurlwidth": 2400,
+        "action": "query", "format": "json", "titles": title, "prop": "imageinfo|categories",
+        "iiprop": "url|extmetadata|size", "iiurlwidth": 2400, "cllimit": 30,
     })
     page = next(iter(payload.get("query", {}).get("pages", {}).values()), {})
     if "missing" in page: return None
@@ -594,8 +594,10 @@ def _commons_file_candidate(file_title):
         info.get("url"), info.get("descriptionurl"), value("LicenseShortName"), value("LicenseUrl"),
         value("Artist"), page.get("pageid", ""), date_text=date_text)
     if candidate:
+        categories = [x.get("title", "").removeprefix("Category:")
+                      for x in page.get("categories", []) if x.get("title")]
         candidate.update({"width": int(info.get("width") or 0), "height": int(info.get("height") or 0),
-                          "seed_file_title": title})
+                          "categories": categories, "seed_file_title": title})
     return candidate
 
 def _loc_rights(x):
