@@ -116,42 +116,82 @@ def _candidate_cell(canvas: Image.Image, box: tuple[int, int, int, int], record:
         draw.text((x+18, y+500+i*18), line, font=_font(12), fill=(178, 196, 201))
 
 
-def create_contact_sheet(plan: dict, candidates_by_scene: dict[str, list[dict]], seed_images: list[dict], out: Path) -> Path:
+def create_contact_sheet(plan: dict, candidates_by_scene: dict[str, list[dict]],
+                         seed_images: list[dict], out: Path,
+                         rejected_by_scene: dict[str, list[dict]] | None = None) -> Path:
     width, cell_w, cell_h, margin = 1600, 500, 570, 30
-    height = 150 + len(plan["scenes"]) * (cell_h + margin) + 650
-    sheet = Image.new("RGB", (width, height), (24, 22, 21))
+    rejected_by_scene = rejected_by_scene or {}
+    roles = [
+        ("exact_story_illustration", "EXACT STORY ILLUSTRATIONS"),
+        ("symbolic_contextual_asset", "SUITABLE SYMBOLIC ASSETS"),
+    ]
+    height = 160
+    for scene in plan["scenes"]:
+        height += 42
+        group = candidates_by_scene.get(scene["id"], [])
+        for role, _ in roles:
+            count = min(6, sum(c.get("visual_role") == role and c.get("review_status") != "rejected_duplicate"
+                               for c in group))
+            height += 34 + (max(1, (count + 2) // 3) * cell_h if count else 54)
+        rejected = rejected_by_scene.get(scene["id"], [])
+        if rejected:
+            height += 34 + min(5, len(rejected)) * 30
+    if seed_images:
+        height += 55 + cell_h
+    sheet = Image.new("RGB", (width, max(height, 800)), (24, 22, 21))
     draw = ImageDraw.Draw(sheet)
-    draw.text((margin, 24), "RUMPELSTILTSKIN — PRIVATE ASSET REVIEW", font=_font(36, True), fill=(247, 231, 205))
-    draw.text((margin, 78), "Candidates that passed the repository's rights, source-size, duplicate, document/OCR and CLIP gates. All remain unapproved.",
+    draw.text((margin, 24), "RUMPELSTILTSKIN — STORY / SYMBOLIC ASSET REVIEW",
+              font=_font(34, True), fill=(247, 231, 205))
+    draw.text((margin, 76),
+              "Exact story illustrations and beat-matched symbolic assets are separated. Every item remains unapproved.",
               font=_font(18), fill=(209, 192, 168))
-    y = 140
+    y = 132
     for scene in plan["scenes"]:
         sid = scene["id"]
         group = candidates_by_scene.get(sid, [])
-        draw.text((margin, y), f"{sid} · {scene.get('title', sid)}", font=_font(23, True), fill=(235, 197, 132))
-        y += 36
-        if not group:
-            draw.rounded_rectangle((margin, y, width-margin, y+cell_h-36), radius=14, fill=(38, 35, 33), outline=(95, 81, 69), width=2)
-            draw.text((margin+24, y+28), "No candidate passed all automatic gates for this beat.", font=_font(21), fill=(208, 196, 180))
-            y += cell_h
-            continue
-        for j, candidate in enumerate(group[:3]):
-            _candidate_cell(sheet, (margin + j*(cell_w+20), y, cell_w, cell_h-36), candidate,
-                            scene.get("title", sid), out.parent)
+        draw.text((margin, y), f"{sid} · {scene.get('title', sid)}",
+                  font=_font(22, True), fill=(235, 197, 132))
+        y += 38
+        for role, heading in roles:
+            records = [c for c in group if c.get("visual_role") == role
+                       and c.get("review_status") != "rejected_duplicate"]
+            draw.text((margin, y), heading, font=_font(17, True), fill=(210, 186, 148))
+            y += 28
+            if not records:
+                draw.text((margin+14, y+8), "No asset passed this category's evidence and automatic gates.",
+                          font=_font(15), fill=(170, 163, 152))
+                y += 50
+                continue
+            for offset in range(0, min(len(records), 6), 3):
+                row = records[offset:offset+3]
+                for j, candidate in enumerate(row):
+                    _candidate_cell(sheet, (margin + j*(cell_w+20), y, cell_w, cell_h-16),
+                                    candidate, scene.get("title", sid), out.parent)
+                y += cell_h
+        rejected = rejected_by_scene.get(sid, [])
+        if rejected:
+            draw.text((margin, y), "REJECTED / UNCERTAIN SEARCH RESULTS (not candidates)",
+                      font=_font(16, True), fill=(210, 132, 120))
+            y += 25
+            for item in rejected[:5]:
+                label = f"{item.get('visual_role', 'unverified_contextual_art')}: {item.get('title', 'Untitled')} — {item.get('reason', 'metadata gate')}"
+                draw.text((margin+14, y), label[:180], font=_font(13), fill=(193, 174, 165))
+                y += 30
+        y += 8
+    if seed_images:
+        draw.text((margin, y), "KNOWN SEED CHECKS — not automatically accepted or counted as beat coverage",
+                  font=_font(20, True), fill=(235, 197, 132))
+        y += 38
+        for j, record in enumerate(seed_images[:3]):
+            if record.get("file") and Path(record["file"]).is_file():
+                _candidate_cell(sheet, (margin + j*(cell_w+20), y, cell_w, cell_h-16),
+                                record, record.get("visual_role_label", "Known Commons seed"), out.parent)
+                draw.text((margin + j*(cell_w+20)+18, y+540),
+                          record.get("review_status", "review"), font=_font(12, True),
+                          fill=(239, 137, 119))
         y += cell_h
-    y += 8
-    draw.text((margin, y), "Known seed checks — files shown here can still be rejected for final use.", font=_font(23, True), fill=(235, 197, 132))
-    y += 40
-    shown = 0
-    for record in seed_images:
-        if not record.get("file") or not Path(record["file"]).is_file(): continue
-        _candidate_cell(sheet, (margin + shown*(cell_w+20), y, cell_w, cell_h-36), record,
-                        "Known Commons seed — placement review", out.parent)
-        draw.text((margin + shown*(cell_w+20)+18, y+286), record.get("review_status", "review"), font=_font(13, True), fill=(239, 137, 119))
-        shown += 1
-        if shown >= 3: break
     out.parent.mkdir(parents=True, exist_ok=True)
-    sheet.save(out, quality=92)
+    sheet.crop((0, 0, width, min(y + 20, sheet.height))).save(out, quality=92)
     return out
 
 
