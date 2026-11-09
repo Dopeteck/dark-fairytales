@@ -141,22 +141,28 @@ class CoverageTests(unittest.TestCase):
                 {**candidate("Portrait of King Lear"), "visual_role": "unrelated_contextual_art"},
             ]},
             {"scene_id": "beat-04", "candidates": [
-                {**candidate("Rumpelstiltskin duplicated", categories=["Rumpelstiltskin"]),
-                 "visual_role": "exact_story_illustration", "review_status": "rejected_duplicate"},
+                {**candidate("The Blue Fairy Book page 97", categories=["Rumpelstiltzkin"]),
+                 "visual_role": "exact_story_illustration", "scene_match_status": "story_identity_only_unplaced"},
+            ]},
+            {"scene_id": "beat-05", "candidates": [
+                {**candidate("Duplicate Rumpelstiltskin image", categories=["Rumpelstiltskin"]),
+                 "visual_role": "exact_story_illustration", "scene_match_status": "metadata_scene_match",
+                 "review_status": "rejected_duplicate"},
             ]},
         ]
         # The first candidate is explicitly classified as exact to model the
         # review script's accepted candidate record.
         beats[0]["candidates"][0]["visual_role"] = "exact_story_illustration"
         beats[0]["candidates"][0]["scene_match_status"] = "metadata_scene_match"
-        beats[3]["candidates"][0]["scene_match_status"] = "story_identity_only_unplaced"
         result = policy.summarize_visual_coverage(beats)
         self.assertEqual(result["beats_with_exact_story_illustrations"], 1)
         self.assertEqual(result["beats_with_suitable_symbolic_assets"], 1)
         self.assertEqual(result["beats_with_any_automatic_candidates"], 2)
-        self.assertEqual(result["beats_lacking_usable_visual"], 2)
+        self.assertEqual(result["beats_lacking_usable_visual"], 3)
+        self.assertEqual(result["story_identified_illustrations_without_verified_beat_placement"], 1)
         self.assertNotIn("beat-03", result["exact_story_illustration_beat_ids"])
         self.assertNotIn("beat-04", result["exact_story_illustration_beat_ids"])
+        self.assertNotIn("beat-05", result["exact_story_illustration_beat_ids"])
 
 
 class ExistingGuardrailTests(unittest.TestCase):
