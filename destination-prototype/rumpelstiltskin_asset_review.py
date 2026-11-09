@@ -118,9 +118,11 @@ def _candidate_cell(canvas: Image.Image, box: tuple[int, int, int, int], record:
 
 def create_contact_sheet(plan: dict, candidates_by_scene: dict[str, list[dict]],
                          seed_images: list[dict], out: Path,
-                         rejected_by_scene: dict[str, list[dict]] | None = None) -> Path:
+                         rejected_by_scene: dict[str, list[dict]] | None = None,
+                         unplaced_story_illustrations: list[dict] | None = None) -> Path:
     width, cell_w, cell_h, margin = 1600, 500, 570, 30
     rejected_by_scene = rejected_by_scene or {}
+    unplaced_story_illustrations = unplaced_story_illustrations or []
     roles = [
         ("exact_story_illustration", "EXACT STORY ILLUSTRATIONS"),
         ("symbolic_contextual_asset", "SUITABLE SYMBOLIC ASSETS"),
@@ -136,6 +138,8 @@ def create_contact_sheet(plan: dict, candidates_by_scene: dict[str, list[dict]],
         rejected = rejected_by_scene.get(scene["id"], [])
         if rejected:
             height += 34 + min(5, len(rejected)) * 30
+    if unplaced_story_illustrations:
+        height += 75 + ((min(12, len(unplaced_story_illustrations)) + 2) // 3) * cell_h
     if seed_images:
         height += 55 + cell_h
     sheet = Image.new("RGB", (width, max(height, 800)), (24, 22, 21))
@@ -178,6 +182,16 @@ def create_contact_sheet(plan: dict, candidates_by_scene: dict[str, list[dict]],
                 draw.text((margin+14, y), label[:180], font=_font(13), fill=(193, 174, 165))
                 y += 30
         y += 8
+    if unplaced_story_illustrations:
+        draw.text((margin, y), "STORY-IDENTIFIED ILLUSTRATIONS — BEAT PLACEMENT NOT VERIFIED",
+                  font=_font(20, True), fill=(235, 197, 132))
+        y += 38
+        for offset in range(0, min(len(unplaced_story_illustrations), 12), 3):
+            row = unplaced_story_illustrations[offset:offset+3]
+            for j, candidate in enumerate(row):
+                _candidate_cell(sheet, (margin + j*(cell_w+20), y, cell_w, cell_h-16),
+                                candidate, "Story identified; specific beat not verified", out.parent)
+            y += cell_h
     if seed_images:
         draw.text((margin, y), "KNOWN SEED CHECKS — not automatically accepted or counted as beat coverage",
                   font=_font(20, True), fill=(235, 197, 132))
@@ -253,6 +267,7 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
     seed_images = [_seed_review(seed, out, config) for seed in SEEDS]
     used: set[str] = set()
     results, candidates_by_scene, rejected_by_scene = [], {}, {}
+    unplaced_story_illustrations: list[dict[str, Any]] = []
     all_sources = {"provider": set(), "rights": set(), "size": set(), "clip": set()}
     rejected, resolver_errors = [], []
 
@@ -298,7 +313,17 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
                         "approved": False,
                     })
                     if role == "exact_story_illustration":
-                        beat_candidates.append(candidate)
+                        scene_status, missing_scene_terms = visual_policy.exact_scene_match_status(candidate, sid)
+                        candidate["scene_match_status"] = scene_status
+                        candidate["missing_scene_metadata_groups"] = missing_scene_terms
+                        if scene_status == "metadata_scene_match":
+                            beat_candidates.append(candidate)
+                        else:
+                            candidate["unplaced_reason"] = (
+                                "Source identifies the Rumpelstiltskin tale, but its metadata does not establish "
+                                "this specific beat. Human visual placement review is required."
+                            )
+                            unplaced_story_illustrations.append(candidate)
                     elif role == "symbolic_contextual_asset" and visual_mode == "symbolic":
                         beat_candidates.append(candidate)
                     else:
@@ -385,6 +410,30 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         result["candidates"] = retained
         candidates_by_scene[result["scene_id"]] = retained
 
+    # Unplaced story illustrations are kept in a separate review section.
+    # Deduplicate them against beat-assigned candidates and each other.
+    retained_unplaced = []
+    for candidate in unplaced_story_illustrations:
+        digest = candidate.get("decoded_pixels_sha256")
+        if digest and digest in seen_pixels:
+            candidate["review_status"] = "rejected_duplicate"
+            candidate["duplicate_of"] = seen_pixels[digest]
+            candidate["approved"] = False
+            rejected.append({
+                "scene_id": candidate.get("story_beat_id"),
+                "visual_role": "exact_story_illustration",
+                "reason": "duplicate of an already listed image; not counted twice",
+                "title": candidate.get("title", ""),
+                "source_url": candidate.get("source_url", ""),
+                "duplicate_of": seen_pixels[digest],
+                "approved": False,
+            })
+            continue
+        if digest:
+            seen_pixels[digest] = candidate.get("candidate_id", digest)
+        retained_unplaced.append(candidate)
+    unplaced_story_illustrations = retained_unplaced
+
     for seed in seed_images:
         matching = next((c for r in results for c in r["candidates"]
                          if c.get("source_url") == seed.get("source_url")), None)
@@ -402,7 +451,8 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         "unique_source_pages_passed_rights_and_attribution": len(all_sources["rights"]),
         "unique_source_pages_passed_resolution_format_ocr_and_duplicate_gates": len(all_sources["size"]),
         "unique_source_pages_passed_clip_relevance_threshold": len(all_sources["clip"]),
-        "unique_candidate_visual_files_for_human_review": sum(len(r["candidates"]) for r in results),
+        "unique_candidate_visual_files_for_human_review": sum(len(r["candidates"]) for r in results) + len(unplaced_story_illustrations),
+        "story_identified_illustrations_without_verified_beat_placement": len(unplaced_story_illustrations),
         "unrelated_or_uncertain_search_results_rejected": len(rejected),
         "all_candidates_approved": False,
         "clip_threshold": 0.22,
@@ -434,6 +484,7 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
             "unverified_story_identity": "Metadata without a story identity anchor is rejected from exact coverage even when CLIP passes.",
         },
         "seeds": seed_images,
+        "unplaced_story_illustrations": unplaced_story_illustrations,
         "beats": results,
         "rejected_or_uncertain": rejected,
         "provider_errors": resolver_errors,
@@ -450,7 +501,8 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
     (out / "provenance-manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     create_contact_sheet(plan, candidates_by_scene, seed_images,
-                         out / "contact-sheet.jpg", rejected_by_scene)
+                         out / "contact-sheet.jpg", rejected_by_scene,
+                         unplaced_story_illustrations)
 
     report = [
         "# Rumpelstiltskin visual coverage report",
