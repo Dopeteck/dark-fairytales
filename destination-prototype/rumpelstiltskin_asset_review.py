@@ -96,11 +96,14 @@ def _story_role(candidate: dict[str, Any]) -> tuple[str, str]:
     return "contextual_historical_art", "Contextual historical art; metadata does not identify this documented story scene."
 
 
-def _candidate_cell(canvas: Image.Image, box: tuple[int, int, int, int], record: dict[str, Any], beat_title: str):
+def _candidate_cell(canvas: Image.Image, box: tuple[int, int, int, int], record: dict[str, Any], beat_title: str,
+                    base_dir: Path):
     draw = ImageDraw.Draw(canvas)
     x, y, w, h = box
     draw.rounded_rectangle((x, y, x+w, y+h), radius=18, fill=(43, 38, 34), outline=(113, 92, 70), width=2)
     source = Path(record["file"])
+    if not source.is_absolute():
+        source = base_dir / source
     img_box = (x+16, y+16, w-32, 330)
     if source.is_file():
         with Image.open(source) as im:
@@ -143,7 +146,8 @@ def create_contact_sheet(plan: dict, candidates_by_scene: dict[str, list[dict]],
             y += cell_h
             continue
         for j, candidate in enumerate(group[:3]):
-            _candidate_cell(sheet, (margin + j*(cell_w+20), y, cell_w, cell_h-36), candidate, scene.get("title", sid))
+            _candidate_cell(sheet, (margin + j*(cell_w+20), y, cell_w, cell_h-36), candidate,
+                            scene.get("title", sid), out.parent)
         y += cell_h
     y += 8
     draw.text((margin, y), "Known seed checks — files shown here can still be rejected for final use.", font=_font(23, True), fill=(235, 197, 132))
@@ -151,7 +155,8 @@ def create_contact_sheet(plan: dict, candidates_by_scene: dict[str, list[dict]],
     shown = 0
     for record in seed_images:
         if not record.get("file") or not Path(record["file"]).is_file(): continue
-        _candidate_cell(sheet, (margin + shown*(cell_w+20), y, cell_w, cell_h-36), record, "Known Commons seed — placement review")
+        _candidate_cell(sheet, (margin + shown*(cell_w+20), y, cell_w, cell_h-36), record,
+                        "Known Commons seed — placement review", out.parent)
         draw.text((margin + shown*(cell_w+20)+18, y+286), record.get("review_status", "review"), font=_font(13, True), fill=(239, 137, 119))
         shown += 1
         if shown >= 3: break
