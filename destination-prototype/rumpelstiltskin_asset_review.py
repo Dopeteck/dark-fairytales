@@ -518,6 +518,10 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         "## Symbolic asset beats",
         *([f"- {x}" for x in coverage["symbolic_asset_beat_ids"]] or ["- None"]),
         "",
+        "## Story-identified images not assigned to a beat",
+        *([f"- {x.get('title', 'Untitled')} — {', '.join(x.get('missing_scene_metadata_groups', []))}"
+           for x in unplaced_story_illustrations] or ["- None"]),
+        "",
         "## Uncovered beats",
         *([f"- {x}" for x in uncovered_ids] or ["- None"]),
         "",
