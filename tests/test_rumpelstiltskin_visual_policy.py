@@ -66,7 +66,7 @@ class StoryIdentityTests(unittest.TestCase):
                                  "unrelated_contextual_art")
 
     def test_high_clip_score_alone_never_proves_story_identity(self):
-        item = candidate("A medieval king in a chamber", clip_score=0.999)
+        item = candidate("A steam locomotive at a railway station", clip_score=0.999)
         self.assertEqual(policy.classify_candidate(item, "beat-04-king-demands"),
                          "unrelated_contextual_art")
 
