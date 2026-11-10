@@ -23,6 +23,11 @@ sys.path.insert(0, str(HERE))
 import asset_resolver as ar
 import rumpelstiltskin_visual_policy as visual_policy
 
+# These prototype modules are loaded explicitly above; do not leave their
+# directory ahead of the repository root and shadow the root scene_planner.
+if str(HERE) in sys.path:
+    sys.path.remove(str(HERE))
+
 SEEDS = [
     {"file_title": "Rumpelstiltskin at the Spinning-Wheel and the Dwarf MET DP827694.jpg",
      "scene_id": "beat-03-first-bargains",
