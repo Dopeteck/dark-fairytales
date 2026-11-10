@@ -452,14 +452,14 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         "unique_source_pages_passed_resolution_format_ocr_and_duplicate_gates": len(all_sources["size"]),
         "unique_source_pages_passed_clip_relevance_threshold": len(all_sources["clip"]),
         "unique_candidate_visual_files_for_human_review": sum(len(r["candidates"]) for r in results) + len(unplaced_story_illustrations),
-        "story_identified_illustrations_without_verified_beat_placement": len(unplaced_story_illustrations),
+        "story_identified_illustrations_without_verified_beat_placement": len(unplaced_story_illustrations),\n        "unplaced_story_illustration_titles": list(dict.fromkeys(str(c.get("title") or c.get("candidate_title") or "Untitled") for c in unplaced_story_illustrations)),
         "unrelated_or_uncertain_search_results_rejected": len(rejected),
         "all_candidates_approved": False,
         "clip_threshold": 0.22,
         "source_size_gate": "short side >= 1080 px; long side >= 1920 px; existing max-upscale <= 1.25; no enlargement performed",
-        "coverage_interpretation": "Only exact story illustrations and beat-matched symbolic assets count. A CLIP pass or a generic contextual image never counts by itself.",
+        "coverage_interpretation": "Exact story illustrations are tracked separately. Symbolic visuals may be atmospheric or object-led; they must pass at least one scene-relevant metadata anchor plus the existing CLIP and technical gates.",
         "recommendation": (
-            "The nine-beat episode is not visually supported yet; keep the script unrendered and either find more tale-specific illustrations or choose a better-illustrated tale."
+            "The nine-beat episode still needs human review of the available atmospheric visuals; do not reject a suitable image merely because it is not a literal story illustration."
             if uncovered_ids else
             "Every beat has an automatically qualified exact or symbolic visual; human review and approval are still required."
         ),
@@ -479,7 +479,7 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         ],
         "visual_policy": {
             "exact_story_illustration": "Rumpelstiltskin/Rumpelstilzchen or a documented historical title alias must appear in source metadata/categories; CLIP alone cannot establish identity.",
-            "symbolic_contextual_asset": "Must pass every beat-specific metadata keyword group and the existing CLIP threshold; is never described as a literal scene from the tale.",
+            "symbolic_contextual_asset": "Must match at least one scene-relevant object, setting or mood anchor and pass existing CLIP and technical gates; it is contextual atmosphere, not proof of a literal story scene.",
             "unrelated_contextual_art": "Fails story-identity and symbolic requirements or matches an unrelated-subject marker; excluded from coverage.",
             "unverified_story_identity": "Metadata without a story identity anchor is rejected from exact coverage even when CLIP passes.",
         },
@@ -533,7 +533,7 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
     (out / "README.txt").write_text(
         "Review artifact only. No image is approved and no MP4 was rendered.\n"
         "Exact story illustrations require a Rumpelstiltskin story identity anchor in source metadata.\n"
-        "Symbolic assets must satisfy every beat-specific metadata requirement and the existing CLIP threshold.\n"
+        "Symbolic assets can be atmospheric or object-led; they need one relevant visual anchor and must pass existing CLIP and technical gates.\n"
         "Unrelated, unverified, low-resolution, text-heavy, duplicate, rights-failing, or CLIP-failing material is rejected or reported as uncertain.\n"
         "See provenance-manifest.json and coverage-report.md for honest counts and source provenance.\n",
         encoding="utf-8")
