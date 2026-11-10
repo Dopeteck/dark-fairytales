@@ -88,12 +88,15 @@ class StoryIdentityTests(unittest.TestCase):
         self.assertEqual(status, "metadata_scene_match")
         self.assertEqual(missing, [])
 
-    def test_symbolic_asset_requires_every_beat_specific_metadata_group(self):
-        complete = candidate("Antique straw spinning wheel engraving")
-        partial = candidate("Antique straw bundle engraving")
-        self.assertEqual(policy.classify_candidate(complete, "beat-01-threat"),
+    def test_symbolic_asset_can_use_one_relevant_atmospheric_anchor(self):
+        object_led = candidate("Antique straw bundle engraving")
+        mood_led = candidate("A candlelit medieval chamber")
+        unrelated = candidate("A steam locomotive at a railway station")
+        self.assertEqual(policy.classify_candidate(object_led, "beat-01-threat"),
                          "symbolic_contextual_asset")
-        self.assertEqual(policy.classify_candidate(partial, "beat-01-threat"),
+        self.assertEqual(policy.classify_candidate(mood_led, "beat-01-threat"),
+                         "symbolic_contextual_asset")
+        self.assertEqual(policy.classify_candidate(unrelated, "beat-01-threat"),
                          "unrelated_contextual_art")
 
     def test_story_identity_takes_precedence_over_symbolic_terms(self):
@@ -178,6 +181,7 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(result["beats_with_any_automatic_candidates"], 2)
         self.assertEqual(result["beats_lacking_usable_visual"], 3)
         self.assertEqual(result["story_identified_illustrations_without_verified_beat_placement"], 1)
+        self.assertEqual(result["unplaced_story_illustration_titles"], ["The Blue Fairy Book page 97"])
         self.assertNotIn("beat-03", result["exact_story_illustration_beat_ids"])
         self.assertNotIn("beat-04", result["exact_story_illustration_beat_ids"])
         self.assertNotIn("beat-05", result["exact_story_illustration_beat_ids"])
