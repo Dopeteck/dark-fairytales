@@ -90,7 +90,7 @@ class StoryIdentityTests(unittest.TestCase):
 
     def test_symbolic_asset_can_use_one_relevant_atmospheric_anchor(self):
         object_led = candidate("Antique straw bundle engraving")
-        mood_led = candidate("A candlelit medieval chamber")
+        mood_led = candidate("A candlelit room")
         unrelated = candidate("A steam locomotive at a railway station")
         self.assertEqual(policy.classify_candidate(object_led, "beat-01-threat"),
                          "symbolic_contextual_asset")
