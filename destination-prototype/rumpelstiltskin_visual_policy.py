@@ -60,43 +60,20 @@ EXACT_SCENE_REQUIREMENTS: dict[str, list[list[str]]] = {
 }
 
 
+# Contextual visuals are mood-setting, not literal storyboard evidence.
+# A single strong visual anchor is enough; the existing CLIP, rights, resolution,
+# OCR and duplicate gates still apply. These terms deliberately include mood,
+# setting and objects so a fairytale can use evocative public-domain artwork.
 SYMBOLIC_REQUIREMENTS: dict[str, list[list[str]]] = {
-    "beat-01-threat": [
-        ["straw", "straw bundle", "Stroh"],
-        ["spinning wheel", "spinning-wheel", "spinnrad", "spindle wheel"],
-    ],
-    "beat-02-boast": [
-        ["miller", "miller's daughter", "Müller"],
-        ["daughter", "Tochter"],
-    ],
-    "beat-03-first-bargains": [
-        ["spinning wheel", "spinning-wheel", "spinnrad"],
-        ["straw", "Stroh", "gold", "golden"],
-    ],
-    "beat-04-king-demands": [
-        ["king", "König"],
-        ["straw", "Stroh", "spinning wheel", "spinnrad"],
-    ],
-    "beat-05-child-pact": [
-        ["cradle", "crib", "baby basket"],
-        ["infant", "baby", "newborn", "child", "Kind"],
-    ],
-    "beat-06-claim": [
-        ["queen", "Königin"],
-        ["infant", "baby", "newborn", "cradle", "Kind"],
-    ],
-    "beat-07-three-days": [
-        ["messenger", "herald", "courier", "Bote"],
-        ["forest", "woods", "woodland", "Wald"],
-    ],
-    "beat-08-forest-fire": [
-        ["fire", "bonfire", "flames", "Feuer"],
-        ["forest", "woods", "woodland", "Wald"],
-    ],
-    "beat-09-foot-revelation": [
-        ["foot", "feet", "Fuß", "footprint"],
-        ["floor", "floorboards", "wooden floor", "Boden"],
-    ],
+    "beat-01-threat": [["straw", "spinning wheel", "spinnrad", "dark chamber", "candlelit room", "tower", "king", "throne"]],
+    "beat-02-boast": [["miller", "mill", "windmill", "watermill", "grain", "flour", "village", "peasant", "humble cottage"]],
+    "beat-03-first-bargains": [["spinning wheel", "spinning-wheel", "spinnrad", "dwarf", "little man", "imp", "gold", "straw", "mysterious stranger"]],
+    "beat-04-king-demands": [["king", "könig", "throne", "royal chamber", "castle", "straw", "gold", "spinning wheel"]],
+    "beat-05-child-pact": [["cradle", "crib", "baby", "infant", "newborn", "bargain", "contract", "ring", "golden necklace"]],
+    "beat-06-claim": [["queen", "königin", "crown", "royal nursery", "cradle", "infant", "baby", "castle chamber"]],
+    "beat-07-three-days": [["messenger", "herald", "courier", "forest", "woods", "moonlit path", "castle gate", "lantern"]],
+    "beat-08-forest-fire": [["forest", "woods", "woodland", "fire", "bonfire", "flames", "dancing", "moonlight", "night"]],
+    "beat-09-foot-revelation": [["foot", "feet", "footprint", "floor", "floorboards", "wooden floor", "fireplace", "cottage", "shadow"]],
 }
 
 SYMBOLIC_SEARCH_TERMS: dict[str, list[str]] = {
@@ -140,7 +117,7 @@ def candidate_metadata_text(candidate: dict[str, Any]) -> str:
         *candidate.get("facets", []),
         *visual.get("categories", []),
         *visual.get("facets", []),
-        visual.get("date_text", ""),
+        visual.get("date_text", ""),\n        visual.get("media_type", ""),\n        visual.get("object_type", ""),\n        visual.get("medium", ""),\n        visual.get("credit", ""),\n        visual.get("source", ""),
     ]
     return _normalise(" ".join(str(v) for v in values if v is not None))
 
