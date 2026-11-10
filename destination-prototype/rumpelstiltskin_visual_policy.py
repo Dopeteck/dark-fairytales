@@ -36,12 +36,17 @@ UNRELATED_SUBJECT_MARKERS = (
     "holy family", "saint", "eagle", "peacock", "owl", "pigeon",
     "falcon", "parrot", "bird", "portrait",
 )
+UNSUITABLE_PHOTO_MARKERS = (
+    "photograph", "photographic", "photo", "newspaper",
+    "albumen print", "gelatin silver print", "cabinet card",
+    "daguerreotype", "ambrotype", "carte de visite",
+)
 
 # Every group must have at least one metadata match. These are deliberately
 # conservative; an empty result is preferable to using unrelated historical art.
 EXACT_SCENE_REQUIREMENTS: dict[str, list[list[str]]] = {
     "beat-01-threat": [["king", "king's room", "king threatens"], ["daughter", "miller's daughter"]],
-    "beat-02-boast": [["miller", "miller's"], ["daughter", "miller's daughter"]],
+    "beat-02-boast": [["father", "miller"], ["boast", "brag", "claims his daughter can spin"]],
     "beat-03-first-bargains": [["spinning wheel", "spinning-wheel", "spinnrad"], ["dwarf", "little man", "imp"]],
     "beat-04-king-demands": [["king", "könig"], ["straw", "spinning wheel", "spinnrad"]],
     "beat-05-child-pact": [["first child", "child bargain", "promise of the child", "promises her child"]],
@@ -166,6 +171,8 @@ def classify_candidate(candidate: dict[str, Any], beat_id: str) -> str:
         return "exact_story_illustration"
     if any(_contains(text, marker) for marker in UNRELATED_SUBJECT_MARKERS):
         return "unrelated_contextual_art"
+    if any(_contains(text, marker) for marker in UNSUITABLE_PHOTO_MARKERS):
+        return "unrelated_contextual_art"
     groups = SYMBOLIC_REQUIREMENTS.get(beat_id, [])
     if groups and all(any(_contains(text, term) for term in group) for group in groups):
         return "symbolic_contextual_asset"
@@ -250,7 +257,9 @@ def summarize_visual_coverage(beats: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     return {
         "story_identified_illustrations_without_verified_beat_placement": len(unplaced_exact),
-        "unplaced_story_illustration_titles": list(dict.fromkeys(str(c.get("title", "")) for c in unplaced_exact)),
+        "unplaced_story_illustration_titles": list(dict.fromkeys(
+            str(c.get("title") or c.get("candidate_title") or "Untitled") for c in unplaced_exact
+        )),
         "beats_with_exact_story_illustrations": len(exact_ids),
         "exact_story_illustration_beat_ids": exact_ids,
         "beats_with_suitable_symbolic_assets": len(symbolic_ids),
