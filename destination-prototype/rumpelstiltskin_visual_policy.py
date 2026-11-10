@@ -35,6 +35,9 @@ UNRELATED_SUBJECT_MARKERS = (
     "madonna", "virgin mary", "jesus", "christ child", "nativity",
     "holy family", "saint", "eagle", "peacock", "owl", "pigeon",
     "falcon", "parrot", "bird", "portrait",
+    # Known unrelated Hawaiian royal portrait/photo surfaced by the review.
+    "albert kunuiakea", "kamehameha iii", "queen kalama",
+    "pacific commercial advertiser",
 )
 UNSUITABLE_PHOTO_MARKERS = (
     "photograph", "photographic", "photo", "newspaper",
