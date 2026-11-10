@@ -70,6 +70,24 @@ class StoryIdentityTests(unittest.TestCase):
         self.assertEqual(policy.classify_candidate(item, "beat-04-king-demands"),
                          "unrelated_contextual_art")
 
+    def test_historical_photographs_do_not_count_as_storybook_symbolic_art(self):
+        photo = candidate(
+            "Albert Kunuiakea with Kamehameha III and Queen Kalama, about 1853",
+            description="Prince Albert as an infant; published in The Pacific Commercial Advertiser",
+            categories=["Queen Kalama", "The Pacific Commercial Advertiser"],
+        )
+        self.assertEqual(policy.classify_candidate(photo, "beat-06-claim"),
+                         "unrelated_contextual_art")
+
+    def test_naeke_spinning_wheel_image_is_not_the_fathers_boast_beat(self):
+        item = candidate("Rumpelstiltskin Appearing to the Miller's Daughter")
+        status, _ = policy.exact_scene_match_status(item, "beat-02-boast")
+        self.assertEqual(status, "story_identity_only_unplaced")
+        correct = candidate("Rumpelstiltskin at the Spinning-Wheel and the Dwarf")
+        status, missing = policy.exact_scene_match_status(correct, "beat-03-first-bargains")
+        self.assertEqual(status, "metadata_scene_match")
+        self.assertEqual(missing, [])
+
     def test_symbolic_asset_requires_every_beat_specific_metadata_group(self):
         complete = candidate("Antique straw spinning wheel engraving")
         partial = candidate("Antique straw bundle engraving")
