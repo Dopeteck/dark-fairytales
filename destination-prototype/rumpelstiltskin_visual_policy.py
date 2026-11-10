@@ -117,7 +117,12 @@ def candidate_metadata_text(candidate: dict[str, Any]) -> str:
         *candidate.get("facets", []),
         *visual.get("categories", []),
         *visual.get("facets", []),
-        visual.get("date_text", ""),\n        visual.get("media_type", ""),\n        visual.get("object_type", ""),\n        visual.get("medium", ""),\n        visual.get("credit", ""),\n        visual.get("source", ""),
+        visual.get("date_text", ""),
+        visual.get("media_type", ""),
+        visual.get("object_type", ""),
+        visual.get("medium", ""),
+        visual.get("credit", ""),
+        visual.get("source", ""),
     ]
     return _normalise(" ".join(str(v) for v in values if v is not None))
 
