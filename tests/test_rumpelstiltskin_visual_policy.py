@@ -144,7 +144,7 @@ class StoryIdentityTests(unittest.TestCase):
             "Rumpelstiltskin at the Spinning-Wheel and the Dwarf MET DP827694",
         )
         status, missing = policy.exact_scene_match_status(spinning_wheel, "beat-03-first-bargains")
-        self.assertEqual(status, "metadata_scene_match")
+        self.assertEqual(status, "curated_story_beat_match")
         self.assertEqual(missing, [])
         threat_status, _ = policy.exact_scene_match_status(spinning_wheel, "beat-01-threat")
         self.assertEqual(threat_status, "story_identity_only_unplaced")
