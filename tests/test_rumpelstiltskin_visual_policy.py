@@ -231,6 +231,19 @@ class StoryIdentityTests(unittest.TestCase):
             "curated_story_beat_match",
         )
 
+        blue_fairy_entrance = candidate(
+            "File:Andrew Lang - The Blue Fairy Book p.116.png",
+            categories=["Blue Fairy Book/Rumpelstiltzkin"],
+        )
+        self.assertEqual(
+            policy.exact_scene_match_status(blue_fairy_entrance, "beat-03-first-bargains")[0],
+            "curated_story_beat_match",
+        )
+        self.assertEqual(
+            policy.curated_beat_for_candidate(blue_fairy_entrance),
+            "beat-03-first-bargains",
+        )
+
     def test_photographic_miller_name_match_is_rejected_by_illustration_style_gate(self):
         photo = candidate(
             "A Miller daughter in a historical family portrait",
