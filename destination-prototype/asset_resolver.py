@@ -492,31 +492,57 @@ def _best_loc_image(urls):
 
 
 def build_queries(scene, config=None, limit=6):
-    """Entities first, then planner tags, then search variants plus short forms; museum APIs prefer short queries."""
-    raw = list(scene.get("named_entities", []) or scene.get("entities", [])) + list(scene.get("visual_tags", []) or scene.get("asset_tags", [])) + list(scene.get("image_search_terms", []))
+    """Build provider queries without allowing generated short forms to crowd out explicit prompts.
+
+    Fairytale symbolic searches opt into search_terms_first because their explicit
+    scene prompts are the useful discovery signal. Other scenes keep the historic
+    entity/tag-first ordering and short-query interleave.
+    """
+    entities = list(scene.get("named_entities", []) or scene.get("entities", []))
+    tags = list(scene.get("visual_tags", []) or scene.get("asset_tags", []))
+    search_terms = list(scene.get("image_search_terms", []))
+    if scene.get("search_terms_first"):
+        full = []
+        for q in search_terms + tags + entities:
+            q = str(q).strip()
+            if q and q not in full:
+                full.append(q)
+        short = []
+        for q in full:
+            words = [w for w in re.findall(r"[\\w'-]+", q) if w.lower() not in GENERIC_WORDS]
+            variant = " ".join(words[:3])
+            if len(words) >= 2 and variant and variant not in full and variant not in short:
+                short.append(variant)
+        ordered = full + short
+        ordered = [q for q in ordered if q.split() and q.split()[-1].lower() not in GENERIC_WORDS]
+        return ordered[:limit]
+
+    raw = entities + tags + search_terms
     out = []
     for q in raw:
         q = str(q).strip()
-        if q and q not in out: out.append(q)
+        if q and q not in out:
+            out.append(q)
     if not out and scene.get("title"):
         out = [str(scene["title"])]          # a scene with no planner terms must still be searchable
     for q in list(out):
-        words = [w for w in re.findall(r"[\w'-]+", q) if w.lower() not in GENERIC_WORDS]
+        words = [w for w in re.findall(r"[\\w'-]+", q) if w.lower() not in GENERIC_WORDS]
         short = " ".join(words[:3])
-        if short and short not in out and len(words) >= 2: out.append(short)
-    # interleave: keep entities/tags in front, but do not let long variants crowd out short ones
+        if short and short not in out and len(words) >= 2:
+            out.append(short)
     long_q = [q for q in out if len(q.split()) > 3]
     short_q = [q for q in out if len(q.split()) <= 3]
     merged = []
     for a, b in zip(short_q + [None] * len(long_q), long_q + [None] * len(short_q)):
         for x in (a, b):
-            if x and x not in merged: merged.append(x)
+            if x and x not in merged:
+                merged.append(x)
     merged = [q for q in merged if q.split() and q.split()[-1].lower() not in GENERIC_WORDS]
-    # Collapse near-identical variants without discarding the longer, entity-specific query.
     unique = []
     for q in merged:
         norm = _norm(q)
-        if norm and not any(norm == _norm(x) or (len(norm.split()) >= 2 and norm in _norm(x)) for x in unique): unique.append(q)
+        if norm and not any(norm == _norm(x) or (len(norm.split()) >= 2 and norm in _norm(x)) for x in unique):
+            unique.append(q)
     return unique[:limit]
 
 
