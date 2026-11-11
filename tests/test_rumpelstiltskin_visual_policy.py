@@ -28,6 +28,7 @@ def candidate(title, description="", categories=None, clip_score=0.99, role=None
         "description": description,
         "visual_metadata": {"categories": categories or [], "facets": []},
         "clip_score": clip_score,
+        "p_fairytale_illustration": 0.9,
         "approved": False,
         "review_status": review_status,
         "decoded_pixels_sha256": "same-pixels",
@@ -98,6 +99,45 @@ class StoryIdentityTests(unittest.TestCase):
                          "symbolic_contextual_asset")
         self.assertEqual(policy.classify_candidate(unrelated, "beat-01-threat"),
                          "unrelated_contextual_art")
+
+    def test_symbolic_assets_fail_closed_without_illustration_style_evidence(self):
+        item = candidate("Antique straw bundle engraving")
+        item.pop("p_fairytale_illustration")
+        self.assertEqual(policy.classify_candidate(item, "beat-01-threat"),
+                         "unrelated_contextual_art")
+
+    def test_weak_clip_match_cannot_turn_a_metadata_word_into_a_visual_match(self):
+        item = candidate(
+            "File:Brother of Chekan with his wife Maria Miller",
+            clip_score=0.252,
+        )
+        self.assertEqual(policy.classify_candidate(item, "beat-02-boast"),
+                         "unrelated_contextual_art")
+
+    def test_museum_sculptures_and_archaeological_objects_are_not_storybook_art(self):
+        item = candidate("Infant Bacchus with Grapes", clip_score=0.32)
+        item["visual_metadata"]["facets"] = [
+            "Sculpture", "Statuette", "Terracotta; marble", "Bacchus",
+        ]
+        self.assertEqual(policy.classify_candidate(item, "beat-06-claim"),
+                         "unrelated_contextual_art")
+
+    def test_incidental_description_words_do_not_validate_unrelated_objects(self):
+        item = candidate(
+            "Brick stamped with cartouches of Asetemkheb",
+            description="Asetemkheb was the daughter of king Psusennes I.",
+            clip_score=0.32,
+        )
+        item["visual_metadata"]["facets"] = ["Ancient Egyptian object", "Brick"]
+        self.assertEqual(policy.classify_candidate(item, "beat-04-king-demands"),
+                         "unrelated_contextual_art")
+
+    def test_curated_story_sources_resolve_to_their_actual_beat(self):
+        met = candidate("Rumpelstiltskin Appearing to the Miller's Daughter")
+        met["visual_metadata"]["identifier"] = "394497"
+        blue_fairy = candidate("File:The Blue Fairy Book, p. 97.jpg")
+        self.assertEqual(policy.curated_beat_for_candidate(met), "beat-03-first-bargains")
+        self.assertEqual(policy.curated_beat_for_candidate(blue_fairy), "beat-03-first-bargains")
 
     def test_story_identity_takes_precedence_over_symbolic_terms(self):
         item = candidate("Rumpelstiltskin and the spinning wheel with straw")
