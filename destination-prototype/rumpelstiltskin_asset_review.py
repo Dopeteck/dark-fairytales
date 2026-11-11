@@ -81,8 +81,8 @@ def _wrap(draw, text: str, font, width: int) -> list[str]:
     return lines
 
 
-def _story_role(candidate: dict[str, Any], beat_id: str) -> tuple[str, str]:
-    role = visual_policy.classify_candidate(candidate, beat_id)
+def _story_role(candidate: dict[str, Any], beat_id: str, visual_mode: str = "symbolic") -> tuple[str, str]:
+    role = visual_policy.classify_candidate(candidate, beat_id, visual_mode)
     labels = {
         "exact_story_illustration": "Exact Rumpelstiltskin story illustration — verify this beat visually",
         "symbolic_contextual_asset": "Fairy-tale illustration — scene-relevant symbolic candidate",
@@ -243,7 +243,10 @@ def _seed_review(seed: dict, out: Path, config: dict) -> dict:
         file_path.write_bytes(data)
         rights_ok = ar._rights_ok(c["rights_statement"]) and (not ar._needs_attribution(c["rights_statement"]) or ar._has_author(c.get("author", "")))
         status = ("eligible_seed_pending_scene_relevance" if size_ok else "rejected_source_resolution") if rights_ok else "rejected_or_uncertain_rights"
-        role, label = _story_role({**base, "visual_metadata": {"categories": c.get("categories", [])}}, seed["scene_id"])
+        role, label = _story_role(
+            {**base, "visual_metadata": {"categories": c.get("categories", [])}},
+            seed["scene_id"], "exact",
+        )
         return {**base, "file": str(file_path), "dimensions": dims, "file_sha256": digest,
                 "decoded_pixels_sha256": decoded, "byte_size": len(data),
                 "resolution_status": "passed" if size_ok else "rejected: source below 1920×1080 requirement",
@@ -308,7 +311,7 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
 
                 for candidate in resolved.get("review_candidates", []):
                     candidate["file"] = str(Path(candidate["file"]).relative_to(out.resolve()))
-                    role, label = _story_role(candidate, sid)
+                    role, label = _story_role(candidate, sid, visual_mode)
                     candidate.update({
                         "story_beat_id": sid,
                         "visual_mode": visual_mode,
@@ -389,6 +392,38 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         candidates_by_scene[sid] = beat_candidates
         rejected_by_scene[sid] = beat_rejections
         results.append(result)
+
+    # Move inspected story illustrations to their known story beat even
+    # when a broad exact-story query discovered them while searching another
+    # beat. Discovery order must never determine storyboard placement.
+    results_by_id = {result["scene_id"]: result for result in results}
+    for result in results:
+        retained = []
+        for candidate in result["candidates"]:
+            target_id = visual_policy.curated_beat_for_candidate(candidate)
+            if (
+                candidate.get("visual_role") == "exact_story_illustration"
+                and target_id
+                and target_id != result["scene_id"]
+                and target_id in results_by_id
+            ):
+                target_result = results_by_id[target_id]
+                candidate["discovered_scene_id"] = candidate.get("story_beat_id") or result["scene_id"]
+                candidate["story_beat_id"] = target_id
+                candidate["scene_id"] = target_id
+                candidate["beat_title"] = target_result["beat_title"]
+                candidate["scene_match_status"] = "curated_story_beat_match"
+                candidate["missing_scene_metadata_groups"] = []
+                candidate["placement_note"] = (
+                    "Placed using the source's known Rumpelstiltskin illustration identity; "
+                    "human review must still confirm that this image suits the beat."
+                )
+                target_result["candidates"].append(candidate)
+                target_result["status"] = "candidates_available"
+            else:
+                retained.append(candidate)
+        result["candidates"] = retained
+        candidates_by_scene[result["scene_id"]] = retained
 
     # Assign a repeated illustration to the beat with the strongest evidence.
     # Curated/source-metadata placement wins first; otherwise use the per-beat
