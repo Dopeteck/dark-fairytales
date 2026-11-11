@@ -156,6 +156,18 @@ class StoryIdentityTests(unittest.TestCase):
         self.assertEqual(scene["identity_aliases"], list(policy.STORY_ALIASES[1:]))
         self.assertFalse(scene["required_keywords"])
 
+    def test_exact_story_searches_reach_providers_before_generic_scene_tags(self):
+        scene = policy.build_review_scene(
+            {"id": "beat-03-first-bargains", "title": "First bargains",
+             "asset_requirement": {"must_show": "little man and spinning wheel",
+                                   "search_terms": ["Rumpelstiltskin spinning wheel dwarf scene"]}},
+            3, "exact",
+        )
+        queries = ar.build_queries(scene, {}, scene["max_queries"])
+        self.assertEqual(queries[:4], policy.EXACT_SEARCH_TERMS[:4])
+        self.assertTrue(scene["search_terms_first"])
+        self.assertEqual(scene["max_queries_per_provider"], 4)
+
     def test_symbolic_search_uses_scene_groups_without_claiming_story_identity(self):
         scene = policy.build_review_scene(
             {"id": "beat-01-threat", "title": "Threat",
