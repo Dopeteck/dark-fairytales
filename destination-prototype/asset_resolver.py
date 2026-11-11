@@ -35,6 +35,10 @@ DOC_PAIR = ("a scanned page of printed text, a book cover, or a document",
             "a painting, photograph, map, or illustration")
 MODERN_PAIR = ("a modern colour photograph taken in recent years",
                "an old painting, woodblock print, drawing, or historical black and white photograph")
+FAIRYTALE_STYLE_PAIR = (
+    "a historical photograph or documentary portrait photograph",
+    "an illustrated fairy-tale book image: an engraving, etching, woodcut, drawing, or painting",
+)
 GENERIC_WORDS = {"historical", "historic", "history", "photograph", "photo", "illustration", "old",
                  "image", "images", "panorama", "period", "early", "modern", "contemporary", "of", "the", "and", "in", "before", "after", "during", "from", "with", "near"}
 STATS = Counter()          # per-scene rejection counters, reset in resolve_scene_image
@@ -841,14 +845,18 @@ def build_clip_prompts(scene, config=None):
     return out[:4]
 
 def _clip_analyze(prompts, image_bytes):
-    """Return per-image dicts: best cosine over the scene prompts, P(document-like), P(modern photo)."""
+    """Return scene relevance, document/modern-photo checks and fairytale illustration style."""
     import torch
     if isinstance(prompts, str): prompts = [prompts]
     prompts = [str(p) for p in prompts]; k = len(prompts)
     model_id = os.getenv("ASSET_CLIP_MODEL", "openai/clip-vit-base-patch32")
     model, processor = _load_clip(model_id)
     images = [Image.open(io.BytesIO(b)).convert("RGB") for b in image_bytes]
-    texts = prompts + [DOC_PAIR[0], DOC_PAIR[1], MODERN_PAIR[0], MODERN_PAIR[1]]
+    texts = prompts + [
+        DOC_PAIR[0], DOC_PAIR[1],
+        MODERN_PAIR[0], MODERN_PAIR[1],
+        FAIRYTALE_STYLE_PAIR[0], FAIRYTALE_STYLE_PAIR[1],
+    ]
     with torch.inference_mode():
         text = processor(text=texts, return_tensors="pt", padding=True, truncation=True)
         ims = processor(images=images, return_tensors="pt")
@@ -857,16 +865,30 @@ def _clip_analyze(prompts, image_bytes):
         ti, ii = outputs.text_embeds, outputs.image_embeds
         ti = ti / ti.norm(p=2, dim=-1, keepdim=True).clamp(min=1e-12)
         ii = ii / ii.norm(p=2, dim=-1, keepdim=True).clamp(min=1e-12)
-        cos = ii @ ti.T                                     # (N, k + 4)
+        cos = ii @ ti.T                                     # (N, k + 6)
         scale = float(model.logit_scale.exp())
         best = cos[:, :k].max(dim=1).values
         p_doc = torch.softmax(scale * cos[:, k:k + 2], dim=-1)[:, 0]
         p_mod = torch.softmax(scale * cos[:, k + 2:k + 4], dim=-1)[:, 0]
-    return [{"score": float(best[i]), "p_document": float(p_doc[i]), "p_modern": float(p_mod[i])} for i in range(len(images))]
+        p_fairytale = torch.softmax(scale * cos[:, k + 4:k + 6], dim=-1)[:, 1]
+    return [{
+        "score": float(best[i]),
+        "p_document": float(p_doc[i]),
+        "p_modern": float(p_mod[i]),
+        "p_fairytale_illustration": float(p_fairytale[i]),
+    } for i in range(len(images))]
 
 def _clip_scores(query, candidates, image_bytes):
     """Backward-compatible: cosine similarity between the query and each image."""
     return [r["score"] for r in _clip_analyze(query, image_bytes)]
+
+
+def _fairytale_style_ok(score, threshold=0.5):
+    """Require CLIP to prefer illustrated storybook art over documentary photography."""
+    try:
+        return score is not None and float(score) >= float(threshold)
+    except (TypeError, ValueError):
+        return False
 
 def _ocr_available():
     try:
@@ -1242,10 +1264,14 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
     except Exception as e:
         raise ResolverError(f"CLIP relevance gate unavailable; refusing keyword-only image selection: {type(e).__name__}: {e}", diagnostics()) from e
     for c, r in zip(ranked, results):
-        c["_score"] = r["score"]; c["_p_doc"] = r["p_document"]; c["_p_modern"] = r["p_modern"]
+        c["_score"] = r["score"]
+        c["_p_doc"] = r["p_document"]
+        c["_p_modern"] = r["p_modern"]
+        c["_p_fairytale_illustration"] = r.get("p_fairytale_illustration")
     # Record every scored candidate (best 5) so the threshold can be calibrated from real data, even when nothing passes.
     clip_top.extend({"provider": c["provider"], "title": c["title"][:80], "clip_score": round(c["_score"], 3),
-                     "p_document": round(c["_p_doc"], 2), "p_modern": round(c["_p_modern"], 2)}
+                     "p_document": round(c["_p_doc"], 2), "p_modern": round(c["_p_modern"], 2),
+                     "p_fairytale_illustration": round(c["_p_fairytale_illustration"], 2)}
                     for c in sorted(ranked, key=lambda c: -c["_score"])[:5])
     lo, hi = scene.get("min_year"), scene.get("max_year")
     survivors = []
@@ -1263,6 +1289,14 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
             if yr and ((hi is not None and yr[0] > int(hi)) or (lo is not None and yr[1] < int(lo))):
                 _note_reject("date_window", c, {"years": list(yr), "min_year": lo, "max_year": hi}); continue
             if not yr: c.setdefault("_warnings", []).append("date unverified")
+        if scene.get("require_fairytale_illustration", False):
+            style_threshold = float(scene.get("min_fairytale_illustration_score", 0.5))
+            if not _fairytale_style_ok(c.get("_p_fairytale_illustration"), style_threshold):
+                _note_reject("not_fairytale_illustration", c, {
+                    "p_fairytale_illustration": round(float(c.get("_p_fairytale_illustration") or 0.0), 3),
+                    "minimum": style_threshold,
+                })
+                continue
         survivors.append(c)
     threshold = float(scene.get("clip_min_score", rcfg.get("clip_min_score", 0.22)))
     # Semantic image relevance must dominate metadata keyword frequency. Keyword hits are a discovery filter, not a score bonus.
@@ -1302,11 +1336,16 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
                 "clip_score": round(float(c["_score"]), 6),
                 "p_document": round(float(c["_p_doc"]), 6),
                 "p_modern": round(float(c["_p_modern"]), 6),
+                "p_fairytale_illustration": round(float(c["_p_fairytale_illustration"]), 6),
                 "visual_metadata": {"categories": c.get("categories", []), "facets": c.get("facets", []),
                                     "date_text": c.get("date_text", ""), "identifier": c.get("identifier", "")},
                 "automatic_checks": {"rights": "passed", "format": "passed", "resolution": "passed",
                                      "duplicate": "passed", "ocr": "passed" if use_ocr else "unavailable",
-                                     "clip_threshold": threshold, "clip_relevance": "passed"},
+                                     "clip_threshold": threshold, "clip_relevance": "passed",
+                                     "fairytale_illustration": ("passed" if not scene.get("require_fairytale_illustration", False)
+                                                                 or _fairytale_style_ok(c.get("_p_fairytale_illustration"),
+                                                                                       scene.get("min_fairytale_illustration_score", 0.5))
+                                                                 else "failed")},
                 "approved": False, "review_status": "candidate_passed_automatic_gates",
             })
     data = winner["_bytes"]; im = Image.open(io.BytesIO(data)).convert("RGB")
@@ -1323,5 +1362,6 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
       "clip_score": winner["_score"], "period_ok": (winner["_p_modern"] >= 0.5) if scene.get("image_type") == "modern" else None,
       "search_variant": "CLIP ranked: " + " | ".join(prompts), "warnings": warnings, "dimensions": list(winner["_size"]),
       "top_candidates": [{"provider": x["provider"], "title": x["title"], "source_url": x["source_url"],
-                          "rights_statement": x["rights_statement"], "clip_score": x["_score"]} for x in top],
+                          "rights_statement": x["rights_statement"], "clip_score": x["_score"],
+                          "p_fairytale_illustration": x.get("_p_fairytale_illustration")} for x in top],
       "review_candidates": review_candidates, "diagnostics": diagnostics()}
