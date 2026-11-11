@@ -1271,7 +1271,7 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
     # Record every scored candidate (best 5) so the threshold can be calibrated from real data, even when nothing passes.
     clip_top.extend({"provider": c["provider"], "title": c["title"][:80], "clip_score": round(c["_score"], 3),
                      "p_document": round(c["_p_doc"], 2), "p_modern": round(c["_p_modern"], 2),
-                     "p_fairytale_illustration": round(c["_p_fairytale_illustration"], 2)}
+                     "p_fairytale_illustration": round(float(c.get("_p_fairytale_illustration") or 0.0), 2)}
                     for c in sorted(ranked, key=lambda c: -c["_score"])[:5])
     lo, hi = scene.get("min_year"), scene.get("max_year")
     survivors = []
@@ -1336,7 +1336,7 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
                 "clip_score": round(float(c["_score"]), 6),
                 "p_document": round(float(c["_p_doc"]), 6),
                 "p_modern": round(float(c["_p_modern"]), 6),
-                "p_fairytale_illustration": round(float(c["_p_fairytale_illustration"]), 6),
+                "p_fairytale_illustration": round(float(c.get("_p_fairytale_illustration") or 0.0), 6),
                 "visual_metadata": {"categories": c.get("categories", []), "facets": c.get("facets", []),
                                     "date_text": c.get("date_text", ""), "identifier": c.get("identifier", "")},
                 "automatic_checks": {"rights": "passed", "format": "passed", "resolution": "passed",
