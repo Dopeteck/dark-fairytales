@@ -323,15 +323,16 @@ def build_review_scene(raw: dict[str, Any], index: int, visual_mode: str, seed_f
         "min_fairytale_illustration_score": SYMBOLIC_MIN_ILLUSTRATION_SCORE,
         "clip_min_score": SYMBOLIC_MIN_CLIP_SCORE,
         "image_search_terms": list(SYMBOLIC_SEARCH_TERMS.get(sid, [])),
+        "search_terms_first": True,
         "visual_tags": [visual, "antique fairy-tale book engraving or woodcut"],
-        "visual_caption": f"An antique fairy-tale book illustration showing {visual}",
+        "visual_caption": f"An antique fairy-tale book illustration supporting {visual}",
         "narration_intent": f"Symbolic contextual asset only; use atmospheric storybook imagery that supports: {visual}",
         "required_keywords": [],
         "required_keyword_groups": SYMBOLIC_REQUIREMENTS.get(sid, []),
         "identity_keyword_groups": [],
         "banned_keywords": [*UNRELATED_SUBJECT_MARKERS, *UNSUITABLE_PHOTO_MARKERS, *UNSUITABLE_OBJECT_MARKERS],
         "max_queries": 8,
-        "max_queries_per_provider": 3,
+        "max_queries_per_provider": 4,
     }
 
 
