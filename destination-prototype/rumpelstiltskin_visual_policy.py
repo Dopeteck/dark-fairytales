@@ -82,7 +82,7 @@ EXACT_SCENE_REQUIREMENTS: dict[str, list[list[str]]] = {
 # OCR and duplicate gates still apply. These terms deliberately include mood,
 # setting and objects so a fairytale can use evocative public-domain artwork.
 SYMBOLIC_REQUIREMENTS: dict[str, list[list[str]]] = {
-    "beat-01-threat": [["straw", "spinning wheel", "spinnrad", "dark chamber", "candlelit room", "tower", "king", "throne"]],
+    "beat-01-threat": [["straw", "spinning wheel", "spinnrad", "dark chamber", "candlelit room", "castle room", "tower", "king", "throne"]],
     "beat-02-boast": [["miller", "mill", "windmill", "watermill", "grain", "flour", "village", "peasant", "humble cottage"]],
     "beat-03-first-bargains": [["spinning wheel", "spinning-wheel", "spinnrad", "dwarf", "little man", "imp", "gold", "straw", "mysterious stranger"]],
     "beat-04-king-demands": [["king", "könig", "throne", "royal chamber", "castle", "straw", "gold", "spinning wheel"]],
@@ -93,25 +93,64 @@ SYMBOLIC_REQUIREMENTS: dict[str, list[list[str]]] = {
     "beat-09-foot-revelation": [["foot", "feet", "footprint", "floor", "floorboards", "wooden floor", "fireplace", "cottage", "shadow"]],
 }
 
+# Broader alternate phrasings deliberately target open-access storybook art.
+# The resolver still enforces rights, image format, resolution, OCR, duplicate,
+# fairytale-style and CLIP gates before an item can reach the review board.
 SYMBOLIC_SEARCH_TERMS: dict[str, list[str]] = {
-    "beat-01-threat": ["miller's daughter locked in a dark castle chamber fairy tale book illustration",
-                       "king threatens girl spinning straw antique storybook engraving"],
-    "beat-02-boast": ["miller boasting to a king about his daughter illustrated fairy tale",
-                      "poor miller and daughter village cottage antique book illustration"],
-    "beat-03-first-bargains": ["miller's daughter spinning wheel little dwarf golden straw fairy tale engraving",
-                               "mysterious little man helping girl spin straw into gold storybook illustration"],
-    "beat-04-king-demands": ["greedy king beside heaps of straw and spinning wheel antique fairy tale illustration",
-                             "medieval king throne candlelit chamber storybook engraving"],
-    "beat-05-child-pact": ["queen makes a bargain for her first child fairy tale illustration",
-                           "royal cradle and golden necklace antique storybook engraving"],
-    "beat-06-claim": ["fairy tale queen holding newborn baby in royal chamber antique illustration",
-                      "little goblin demanding a child from queen storybook engraving"],
-    "beat-07-three-days": ["queen sends messenger to discover a mysterious man's name fairy tale engraving",
-                           "royal messenger riding through moonlit forest antique storybook illustration"],
-    "beat-08-forest-fire": ["tiny goblin dancing around a bonfire in dark forest fairy tale illustration",
-                            "mysterious little man dancing beside flames woodland storybook engraving"],
-    "beat-09-foot-revelation": ["rumpelstiltskin stamping foot through wooden floor fairy tale illustration",
-                               "angry little goblin stuck in floorboards antique storybook engraving"],
+    "beat-01-threat": [
+        "miller's daughter alone in a dark castle chamber antique fairy tale illustration",
+        "king in a shadowy medieval throne room storybook woodcut",
+        "girl beside straw and spinning wheel candlelit tower antique engraving",
+        "dark castle room frightened maiden vintage fairytale illustration",
+    ],
+    "beat-02-boast": [
+        "poor miller boasting about his daughter antique fairy tale woodcut",
+        "old miller and daughter outside a village cottage storybook engraving",
+        "medieval peasant miller grain sacks windmill illustrated folk tale",
+        "humble village mill at dusk antique storybook illustration",
+    ],
+    "beat-03-first-bargains": [
+        "miller's daughter at spinning wheel with little dwarf antique fairytale illustration",
+        "mysterious little man appearing beside a spinning wheel old storybook engraving",
+        "spinning wheel straw and gold candlelit cottage vintage woodcut",
+        "small goblin in a dark cottage antique fairy tale illustration",
+    ],
+    "beat-04-king-demands": [
+        "medieval king in a royal chamber antique fairy tale woodcut",
+        "king seated on a throne in a stone castle storybook engraving",
+        "royal chamber piled with straw golden spinning wheel vintage illustration",
+        "dark medieval throne room king and courtiers antique print",
+    ],
+    "beat-05-child-pact": [
+        "queen making a dark bargain beside a cradle antique fairy tale illustration",
+        "royal cradle and golden necklace old storybook engraving",
+        "mother holding a baby in a candlelit medieval chamber vintage illustration",
+        "small mysterious figure bargaining with a queen storybook woodcut",
+    ],
+    "beat-06-claim": [
+        "queen holding newborn child in a castle chamber antique fairy tale illustration",
+        "medieval queen with baby and crown old storybook engraving",
+        "royal nursery cradle candlelight antique illustrated tale",
+        "small goblin demanding a child from a queen vintage woodcut",
+    ],
+    "beat-07-three-days": [
+        "messenger riding through a moonlit forest antique storybook engraving",
+        "herald with lantern on a dark woodland path vintage fairy tale illustration",
+        "queen searching for a mysterious name medieval castle antique print",
+        "horseman carrying a message through a night forest old woodcut",
+    ],
+    "beat-08-forest-fire": [
+        "tiny goblin dancing around a bonfire in dark forest antique illustration",
+        "small mysterious man dancing beside flames woodland storybook engraving",
+        "bonfire in a moonlit forest vintage fairy tale woodcut",
+        "dark woodland clearing with fire and dancing figure antique print",
+    ],
+    "beat-09-foot-revelation": [
+        "angry goblin stamping foot through wooden floor antique fairy tale illustration",
+        "little man caught in cottage floorboards vintage storybook woodcut",
+        "dark cottage room wooden floor and strange shadowy figure antique engraving",
+        "mysterious dwarf in a candlelit wooden chamber old fairy tale illustration",
+    ],
 }
 
 EXACT_SEARCH_TERMS = [
@@ -281,17 +320,18 @@ def build_review_scene(raw: dict[str, Any], index: int, visual_mode: str, seed_f
         "title": raw.get("title", sid),
         "image_type": "historic",
         "require_fairytale_illustration": True,
-        "min_fairytale_illustration_score": 0.5,
+        "min_fairytale_illustration_score": SYMBOLIC_MIN_ILLUSTRATION_SCORE,
+        "clip_min_score": SYMBOLIC_MIN_CLIP_SCORE,
         "image_search_terms": list(SYMBOLIC_SEARCH_TERMS.get(sid, [])),
         "visual_tags": [visual, "antique fairy-tale book engraving or woodcut"],
         "visual_caption": f"An antique fairy-tale book illustration showing {visual}",
-        "narration_intent": f"Symbolic contextual asset only; it must depict the required objects/settings: {visual}",
+        "narration_intent": f"Symbolic contextual asset only; use atmospheric storybook imagery that supports: {visual}",
         "required_keywords": [],
         "required_keyword_groups": SYMBOLIC_REQUIREMENTS.get(sid, []),
         "identity_keyword_groups": [],
-        "banned_keywords": list(UNRELATED_SUBJECT_MARKERS),
-        "max_queries": 6,
-        "max_queries_per_provider": 2,
+        "banned_keywords": [*UNRELATED_SUBJECT_MARKERS, *UNSUITABLE_PHOTO_MARKERS, *UNSUITABLE_OBJECT_MARKERS],
+        "max_queries": 8,
+        "max_queries_per_provider": 3,
     }
 
 
