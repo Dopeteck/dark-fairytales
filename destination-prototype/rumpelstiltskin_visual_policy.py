@@ -149,8 +149,12 @@ def candidate_metadata_text(candidate: dict[str, Any]) -> str:
 def exact_scene_match_status(candidate: dict[str, Any], beat_id: str) -> tuple[str, list[str]]:
     """Return metadata, curated-source, or CLIP-review placement evidence for this beat."""
     text = candidate_metadata_text(candidate)
-    source_evidence = " ".join(str(candidate.get(k, "")) for k in
-                               ("title", "source_url", "identifier", "seed_file_title"))
+    visual = candidate.get("visual_metadata") or {}
+    source_evidence = " ".join(str(value or "") for value in (
+        candidate.get("title"), candidate.get("source_url"),
+        candidate.get("identifier"), candidate.get("seed_file_title"),
+        visual.get("identifier"),
+    ))
     for source_hint, assigned_beat in CURATED_STORY_BEAT_ASSIGNMENTS.items():
         if assigned_beat == beat_id and _contains(_normalise(source_evidence), source_hint):
             return "curated_story_beat_match", []
