@@ -39,25 +39,25 @@ class GeneratorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             generator.build_prompt({"id": "unknown-beat"}, 1)
 
-    def test_cloudflare_image_response_is_decoded(self):
+    def test_cloudflare_request_uses_only_supported_flux_inputs(self):
         response = Mock(status_code=200)
         response.json.return_value = {"result": {"image": self.image_b64}}
         session = Mock()
         session.post.return_value = response
-        data = generator.generate_one("a fairytale scene", "account", "token", 42, session=session)
+        data = generator.generate_one("a fairytale scene", "account", "token", steps=4, session=session)
         self.assertTrue(data.startswith(b"\xff\xd8"))
         session.post.assert_called_once()
         args, kwargs = session.post.call_args
         self.assertIn("/ai/run/@cf/black-forest-labs/flux-1-schnell", args[0])
-        self.assertEqual(kwargs["json"]["seed"], 42)
-        self.assertEqual(kwargs["json"]["steps"], 4)
+        self.assertEqual(kwargs["json"], {"prompt": "a fairytale scene", "steps": 4})
+        self.assertNotIn("seed", kwargs["json"])
 
     def test_http_errors_are_clear(self):
         response = Mock(status_code=429, text="rate limited")
         session = Mock()
         session.post.return_value = response
         with self.assertRaisesRegex(RuntimeError, "rate limit"):
-            generator.generate_one("prompt", "account", "token", 1, session=session)
+            generator.generate_one("prompt", "account", "token", session=session)
 
     def test_run_writes_verified_unapproved_scene_files_and_manifest(self):
         response = Mock(status_code=200)
@@ -65,8 +65,8 @@ class GeneratorTests(unittest.TestCase):
         session = Mock()
         session.post.return_value = response
         original = generator.generate_one
-        generator.generate_one = lambda prompt, account_id, api_token, seed, steps=4: original(
-            prompt, account_id, api_token, seed, steps, session=session
+        generator.generate_one = lambda prompt, account_id, api_token, steps=4: original(
+            prompt, account_id, api_token, steps, session=session
         )
         try:
             with tempfile.TemporaryDirectory() as temp:
