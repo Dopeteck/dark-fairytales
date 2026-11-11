@@ -844,19 +844,17 @@ def build_clip_prompts(scene, config=None):
         if p not in out: out.append(p)
     return out[:4]
 
-def _clip_analyze(prompts, image_bytes):
-    """Return scene relevance, document/modern-photo checks and fairytale illustration style."""
+def _clip_analyze(prompts, image_bytes, include_fairytale_style=False):
+    """Return scene relevance and document/modern checks; optionally score fairytale illustration style."""
     import torch
     if isinstance(prompts, str): prompts = [prompts]
     prompts = [str(p) for p in prompts]; k = len(prompts)
     model_id = os.getenv("ASSET_CLIP_MODEL", "openai/clip-vit-base-patch32")
     model, processor = _load_clip(model_id)
     images = [Image.open(io.BytesIO(b)).convert("RGB") for b in image_bytes]
-    texts = prompts + [
-        DOC_PAIR[0], DOC_PAIR[1],
-        MODERN_PAIR[0], MODERN_PAIR[1],
-        FAIRYTALE_STYLE_PAIR[0], FAIRYTALE_STYLE_PAIR[1],
-    ]
+    texts = prompts + [DOC_PAIR[0], DOC_PAIR[1], MODERN_PAIR[0], MODERN_PAIR[1]]
+    if include_fairytale_style:
+        texts += [FAIRYTALE_STYLE_PAIR[0], FAIRYTALE_STYLE_PAIR[1]]
     with torch.inference_mode():
         text = processor(text=texts, return_tensors="pt", padding=True, truncation=True)
         ims = processor(images=images, return_tensors="pt")
@@ -865,18 +863,22 @@ def _clip_analyze(prompts, image_bytes):
         ti, ii = outputs.text_embeds, outputs.image_embeds
         ti = ti / ti.norm(p=2, dim=-1, keepdim=True).clamp(min=1e-12)
         ii = ii / ii.norm(p=2, dim=-1, keepdim=True).clamp(min=1e-12)
-        cos = ii @ ti.T                                     # (N, k + 6)
+        cos = ii @ ti.T                                     # (N, k + 4), or k + 6 for fairytale scenes
         scale = float(model.logit_scale.exp())
         best = cos[:, :k].max(dim=1).values
         p_doc = torch.softmax(scale * cos[:, k:k + 2], dim=-1)[:, 0]
         p_mod = torch.softmax(scale * cos[:, k + 2:k + 4], dim=-1)[:, 0]
-        p_fairytale = torch.softmax(scale * cos[:, k + 4:k + 6], dim=-1)[:, 1]
-    return [{
-        "score": float(best[i]),
-        "p_document": float(p_doc[i]),
-        "p_modern": float(p_mod[i]),
-        "p_fairytale_illustration": float(p_fairytale[i]),
-    } for i in range(len(images))]
+        p_fairytale = (
+            torch.softmax(scale * cos[:, k + 4:k + 6], dim=-1)[:, 1]
+            if include_fairytale_style else None
+        )
+    results = []
+    for i in range(len(images)):
+        row = {"score": float(best[i]), "p_document": float(p_doc[i]), "p_modern": float(p_mod[i])}
+        if p_fairytale is not None:
+            row["p_fairytale_illustration"] = float(p_fairytale[i])
+        results.append(row)
+    return results
 
 def _clip_scores(query, candidates, image_bytes):
     """Backward-compatible: cosine similarity between the query and each image."""
@@ -1259,7 +1261,13 @@ def resolve_scene_image(scene, idx, config, asset_dir, used, output):
     prompts = build_clip_prompts(scene, config)
     try:
         started = time.perf_counter()
-        results = _clip_analyze(prompts, [x["_bytes"] for x in ranked])
+        results = _clip_analyze(
+            prompts,
+            [x["_bytes"] for x in ranked],
+            include_fairytale_style=bool(scene.get("require_fairytale_illustration", False)),
+        ) if scene.get("require_fairytale_illustration", False) else _clip_analyze(
+            prompts, [x["_bytes"] for x in ranked]
+        )
         print(f"TIMING clip_analysis scene={scene.get('title')} candidates={len(ranked)} seconds={time.perf_counter()-started:.2f}")
     except Exception as e:
         raise ResolverError(f"CLIP relevance gate unavailable; refusing keyword-only image selection: {type(e).__name__}: {e}", diagnostics()) from e
