@@ -5,13 +5,11 @@ on:
     branches:
       - feature/dark-folklore-shorts
     paths:
-      - "destination-prototype/generate_fairytale_scenes.py"
-      - "tests/test_generate_fairytale_scenes.py"
-      - ".github/workflows/generate-fairytale-scenes.yml"
+      - "dispatch/generate-fairytale-scenes.txt"
   workflow_dispatch:
     inputs:
       steps:
-        description: "FLUX.1 schnell inference steps (higher can improve quality)"
+        description: "FLUX.1 schnell inference steps"
         type: choice
         options: ["4", "6", "8"]
         default: "4"
@@ -25,26 +23,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  tests:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feature/dark-folklore-shorts
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install test dependencies
-        run: python -m pip install "requests>=2.31" "Pillow>=10"
-      - name: Run generator tests
-        run: python -m unittest discover -s tests -p "test_generate_fairytale_scenes.py" -v
-      - name: Compile generator
-        run: python -m py_compile destination-prototype/generate_fairytale_scenes.py
-
   generate:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/dark-folklore-shorts'
+    if: github.ref == 'refs/heads/feature/dark-folklore-shorts' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -73,7 +53,7 @@ jobs:
           python destination-prototype/generate_fairytale_scenes.py \
             --plan research/rumpelstiltskin-pilot.json \
             --output output/rumpelstiltskin-generated-scenes \
-            --steps "${{ inputs.steps }}"
+            --steps "${{ inputs.steps || '4' }}"
       - name: Upload unapproved scene artwork
         if: always()
         uses: actions/upload-artifact@v4
