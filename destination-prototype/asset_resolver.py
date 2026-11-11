@@ -509,7 +509,7 @@ def build_queries(scene, config=None, limit=6):
                 full.append(q)
         short = []
         for q in full:
-            words = [w for w in re.findall(r"[\\w'-]+", q) if w.lower() not in GENERIC_WORDS]
+            words = [w for w in re.findall(r"[\w'-]+", q) if w.lower() not in GENERIC_WORDS]
             variant = " ".join(words[:3])
             if len(words) >= 2 and variant and variant not in full and variant not in short:
                 short.append(variant)
@@ -526,7 +526,7 @@ def build_queries(scene, config=None, limit=6):
     if not out and scene.get("title"):
         out = [str(scene["title"])]          # a scene with no planner terms must still be searchable
     for q in list(out):
-        words = [w for w in re.findall(r"[\\w'-]+", q) if w.lower() not in GENERIC_WORDS]
+        words = [w for w in re.findall(r"[\w'-]+", q) if w.lower() not in GENERIC_WORDS]
         short = " ".join(words[:3])
         if short and short not in out and len(words) >= 2:
             out.append(short)
