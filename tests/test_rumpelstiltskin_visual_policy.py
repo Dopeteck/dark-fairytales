@@ -317,9 +317,10 @@ class ExistingGuardrailTests(unittest.TestCase):
             }
             with patch.object(asset_review, "SEEDS", []), \
                  patch.object(asset_review.ar, "resolve_scene_image",
-                              return_value=(Image.new("RGB", (100, 100)), fake_result)), \
+                              return_value=(Image.new("RGB", (100, 100)), fake_result)) as resolver_mock, \
                  patch.object(asset_review, "create_contact_sheet"):
                 manifest = asset_review.run(plan_path, output)
+            self.assertEqual(resolver_mock.call_count, 2, "exact and symbolic searches must both run for a beat")
             self.assertEqual(manifest["summary"]["unique_candidate_visual_files_for_human_review"], 1)
             self.assertEqual(manifest["summary"]["beats_with_exact_story_illustrations"], 1)
             self.assertEqual(manifest["summary"]["unrelated_or_uncertain_search_results_rejected"], 1)
