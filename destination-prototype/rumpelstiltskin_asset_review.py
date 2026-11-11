@@ -286,13 +286,11 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         # while searching one beat must remain eligible for the beat it depicts.
         scene_used: set[str] = set()
 
-        # Exact story discovery comes first. Symbolic search is run only when
-        # the beat has no story-identified image after all existing gates.
+        # Run both searches for every beat. Exact tale illustrations often
+        # appear in several search results; global deduplication later assigns
+        # each one to its strongest scene. Symbolic storybook imagery must still
+        # be searched for the other beats so one illustration cannot leave them blank.
         for visual_mode in ("exact", "symbolic"):
-            if visual_mode == "symbolic" and any(
-                c.get("visual_role") == "exact_story_illustration" for c in beat_candidates
-            ):
-                break
             scene = review_scene(raw, index, visual_mode)
             queries_by_mode[visual_mode] = scene.get("image_search_terms", [])
             try:
