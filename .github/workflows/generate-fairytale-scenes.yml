@@ -1,0 +1,67 @@
+name: Generate fairytale scene artwork
+
+on:
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: "FLUX.1 schnell inference steps (higher can improve quality)"
+        type: choice
+        options: ["4", "6", "8"]
+        default: "4"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fairytale-scene-generation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    if: github.ref == 'refs/heads/feature/dark-folklore-shorts'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/dark-folklore-shorts
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install image generation dependencies
+        run: python -m pip install "requests>=2.31" "Pillow>=10"
+
+      - name: Check Cloudflare credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "::error::Missing repository secret CLOUDFLARE_ACCOUNT_ID"; exit 1)
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN"; exit 1)
+
+      - name: Run offline generator tests
+        run: python -m unittest tests/test_generate_fairytale_scenes.py -v
+
+      - name: Generate nine review-only scene images
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python destination-prototype/generate_fairytale_scenes.py \
+            --plan research/rumpelstiltskin-pilot.json \
+            --output output/rumpelstiltskin-generated-scenes \
+            --steps "${{ inputs.steps }}"
+
+      - name: Upload unapproved scene artwork
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rumpelstiltskin-generated-scenes-${{ github.run_id }}
+          path: output/rumpelstiltskin-generated-scenes/
+          if-no-files-found: warn
+          retention-days: 14
