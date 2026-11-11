@@ -167,6 +167,18 @@ class StoryIdentityTests(unittest.TestCase):
                          policy.SYMBOLIC_REQUIREMENTS["beat-01-threat"])
         self.assertTrue(scene["banned_keywords"])
 
+    def test_symbolic_provider_queries_keep_authored_scene_prompts_first(self):
+        scene = policy.build_review_scene(
+            {"id": "beat-01-threat", "title": "Threat",
+             "asset_requirement": {"must_show": "straw and spinning wheel"}},
+            1, "symbolic",
+        )
+        queries = ar.build_queries(scene, {}, scene["max_queries"])
+        authored = policy.SYMBOLIC_SEARCH_TERMS["beat-01-threat"]
+        self.assertEqual(queries[:len(authored)], authored)
+        self.assertEqual(scene["max_queries_per_provider"], 4)
+        self.assertTrue(scene["search_terms_first"])
+
 
     def test_story_identity_without_beat_metadata_is_not_beat_coverage(self):
         source_only = candidate(
