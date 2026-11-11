@@ -513,9 +513,9 @@ def build_queries(scene, config=None, limit=6):
             variant = " ".join(words[:3])
             if len(words) >= 2 and variant and variant not in full and variant not in short:
                 short.append(variant)
-        ordered = full + short
-        ordered = [q for q in ordered if q.split() and q.split()[-1].lower() not in GENERIC_WORDS]
-        return ordered[:limit]
+        # Preserve complete authored prompts verbatim, including endings like
+        # "illustration" and "engraving"; only generated short forms are optional.
+        return (full + short)[:limit]
 
     raw = entities + tags + search_terms
     out = []
