@@ -149,7 +149,56 @@ class StoryIdentityTests(unittest.TestCase):
         threat_status, _ = policy.exact_scene_match_status(spinning_wheel, "beat-01-threat")
         self.assertEqual(threat_status, "story_identity_only_unplaced")
 
+    def test_curated_story_illustrations_are_mapped_to_their_actual_story_beats(self):
+        met = candidate("Rumpelstiltskin Appearing to the Miller's Daughter")
+        met["identifier"] = "394497"
+        self.assertEqual(
+            policy.exact_scene_match_status(met, "beat-03-first-bargains")[0],
+            "curated_story_beat_match",
+        )
+        blue_fairy = candidate("File:The Blue Fairy Book, p. 97.jpg")
+        self.assertEqual(
+            policy.exact_scene_match_status(blue_fairy, "beat-03-first-bargains")[0],
+            "curated_story_beat_match",
+        )
+        final_scene = candidate("File:GrimmsGoblins-140-Rumpelstiltskin.jpg")
+        self.assertEqual(
+            policy.exact_scene_match_status(final_scene, "beat-09-foot-revelation")[0],
+            "curated_story_beat_match",
+        )
+
+    def test_photographic_miller_name_match_is_rejected_by_illustration_style_gate(self):
+        photo = candidate(
+            "A Miller daughter in a historical family portrait",
+            description="A named couple photographed in Paris",
+        )
+        photo["p_fairytale_illustration"] = 0.08
+        self.assertEqual(policy.classify_candidate(photo, "beat-02-boast"),
+                         "unrelated_contextual_art")
+        illustration = candidate("An antique illustrated miller and daughter")
+        illustration["p_fairytale_illustration"] = 0.92
+        self.assertEqual(policy.classify_candidate(illustration, "beat-02-boast"),
+                         "symbolic_contextual_asset")
+
+    def test_fairytale_style_gate_requires_illustration_probability(self):
+        self.assertTrue(ar._fairytale_style_ok(0.81))
+        self.assertFalse(ar._fairytale_style_ok(0.19))
+        self.assertFalse(ar._fairytale_style_ok(None))
+
 class CoverageTests(unittest.TestCase):
+    def test_clip_ranked_story_image_is_counted_as_a_review_candidate_not_auto_approved(self):
+        image = {
+            **candidate("Rumpelstiltskin Appearing to the Miller's Daughter"),
+            "visual_role": "exact_story_illustration",
+            "scene_match_status": "clip_ranked_human_review",
+        }
+        beat = {"scene_id": "beat-03-first-bargains", "candidates": [image]}
+        result = policy.summarize_visual_coverage([beat])
+        self.assertEqual(result["beats_with_story_illustration_candidates_for_human_placement"], 1)
+        self.assertEqual(result["story_illustration_candidate_beat_ids"], ["beat-03-first-bargains"])
+        self.assertEqual(result["beats_with_any_automatic_candidates"], 1)
+        self.assertFalse(image.get("approved", False))
+
     def test_coverage_never_counts_context_as_exact_or_duplicate_as_usable(self):
         beats = [
             {"scene_id": "beat-01", "candidates": [
