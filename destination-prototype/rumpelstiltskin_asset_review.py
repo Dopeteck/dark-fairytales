@@ -84,9 +84,9 @@ def _wrap(draw, text: str, font, width: int) -> list[str]:
 def _story_role(candidate: dict[str, Any], beat_id: str) -> tuple[str, str]:
     role = visual_policy.classify_candidate(candidate, beat_id)
     labels = {
-        "exact_story_illustration": "Exact story illustration — source metadata identifies this tale",
-        "symbolic_contextual_asset": "Suitable symbolic asset — required visual objects/settings match",
-        "unrelated_contextual_art": "Rejected — unrelated or unverified context",
+        "exact_story_illustration": "Exact Rumpelstiltskin story illustration — verify this beat visually",
+        "symbolic_contextual_asset": "Fairy-tale illustration — scene-relevant symbolic candidate",
+        "unrelated_contextual_art": "Rejected — unrelated or non-illustrative visual",
     }
     return role, labels[role]
 
@@ -270,7 +270,6 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
                                      "plate list", "contents page", "pdf", "djvu", "document scan",
                                      "report cover"]}
     seed_images = [_seed_review(seed, out, config) for seed in SEEDS]
-    used: set[str] = set()
     results, candidates_by_scene, rejected_by_scene = [], {}, {}
     unplaced_story_illustrations: list[dict[str, Any]] = []
     all_sources = {"provider": set(), "rights": set(), "size": set(), "clip": set()}
@@ -283,6 +282,9 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         diagnostics_by_mode: dict[str, Any] = {}
         errors_by_mode: dict[str, str] = {}
         queries_by_mode: dict[str, list[str]] = {}
+        # A scene gets its own duplicate set. A story illustration discovered
+        # while searching one beat must remain eligible for the beat it depicts.
+        scene_used: set[str] = set()
 
         # Exact story discovery comes first. Symbolic search is run only when
         # the beat has no story-identified image after all existing gates.
@@ -297,7 +299,7 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
                 resolver_preview_dir = out / "resolver-jpegs" / scene["id"]
                 resolver_preview_dir.mkdir(parents=True, exist_ok=True)
                 _, resolved = ar.resolve_scene_image(scene, index, config,
-                    resolver_preview_dir, used, out)
+                    resolver_preview_dir, scene_used, out)
                 diag = resolved.get("diagnostics", {})
                 diagnostics_by_mode[visual_mode] = diag
                 for key, field in (("provider", "provider_source_urls"),
@@ -319,16 +321,20 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
                     })
                     if role == "exact_story_illustration":
                         scene_status, missing_scene_terms = visual_policy.exact_scene_match_status(candidate, sid)
-                        candidate["scene_match_status"] = scene_status
                         candidate["missing_scene_metadata_groups"] = missing_scene_terms
-                        if scene_status == "metadata_scene_match":
-                            beat_candidates.append(candidate)
+                        if scene_status in ("metadata_scene_match", "curated_story_beat_match"):
+                            candidate["scene_match_status"] = scene_status
                         else:
-                            candidate["unplaced_reason"] = (
-                                "Source identifies the Rumpelstiltskin tale, but its metadata does not establish "
-                                "this specific beat. Human visual placement review is required."
+                            # The resolver has already ranked this image against
+                            # this beat's visual prompt and passed its CLIP gate.
+                            # Keep it as a story-specific review candidate rather
+                            # than discarding it for sparse catalogue metadata.
+                            candidate["scene_match_status"] = "clip_ranked_human_review"
+                            candidate["placement_note"] = (
+                                "The source identifies Rumpelstiltskin and CLIP ranked this image for this beat; "
+                                "a human must confirm the depicted moment before approval."
                             )
-                            unplaced_story_illustrations.append(candidate)
+                        beat_candidates.append(candidate)
                     elif role == "symbolic_contextual_asset" and visual_mode == "symbolic":
                         beat_candidates.append(candidate)
                     else:
@@ -386,58 +392,54 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         rejected_by_scene[sid] = beat_rejections
         results.append(result)
 
-    # Deduplicate across beats/modes by decoded RGB pixels. Duplicates never
-    # contribute to exact or symbolic coverage.
-    seen_pixels: dict[str, str] = {}
+    # Assign a repeated illustration to the beat with the strongest evidence.
+    # Curated/source-metadata placement wins first; otherwise use the per-beat
+    # CLIP score. This prevents the first search result from stealing an image
+    # from the scene it actually depicts.
+    def visual_key(candidate: dict[str, Any]) -> str:
+        return str(candidate.get("decoded_pixels_sha256") or candidate.get("source_url") or
+                   candidate.get("candidate_id") or "")
+
+    def placement_rank(candidate: dict[str, Any]) -> tuple[int, float, int]:
+        status = candidate.get("scene_match_status")
+        confidence = 2 if status in ("metadata_scene_match", "curated_story_beat_match") else 1
+        score = float(candidate.get("clip_score") or 0.0)
+        rank = -int(candidate.get("rank") or 99)
+        return confidence, score, rank
+
+    best_by_visual: dict[str, dict[str, Any]] = {}
+    for result in results:
+        for candidate in result["candidates"]:
+            key = visual_key(candidate)
+            if not key:
+                continue
+            previous = best_by_visual.get(key)
+            if previous is None or placement_rank(candidate) > placement_rank(previous):
+                best_by_visual[key] = candidate
+
     for result in results:
         retained = []
         for candidate in result["candidates"]:
-            digest = candidate.get("decoded_pixels_sha256")
-            if digest and digest in seen_pixels:
+            key = visual_key(candidate)
+            winner = best_by_visual.get(key) if key else candidate
+            if winner is not candidate:
                 candidate["review_status"] = "rejected_duplicate"
-                candidate["duplicate_of"] = seen_pixels[digest]
-                candidate["approved"] = False
+                candidate["duplicate_of"] = winner.get("candidate_id") or winner.get("source_url")
                 entry = {
                     "scene_id": result["scene_id"],
                     "visual_role": candidate.get("visual_role"),
-                    "reason": "duplicate decoded pixels",
+                    "reason": "same image assigned to its strongest-scoring or curated story beat",
                     "title": candidate.get("title", ""),
                     "source_url": candidate.get("source_url", ""),
-                    "duplicate_of": seen_pixels[digest],
+                    "assigned_to": winner.get("story_beat_id"),
                     "approved": False,
                 }
                 rejected.append(entry)
                 rejected_by_scene[result["scene_id"]].append(entry)
                 continue
-            if digest:
-                seen_pixels[digest] = candidate.get("candidate_id", digest)
             retained.append(candidate)
         result["candidates"] = retained
         candidates_by_scene[result["scene_id"]] = retained
-
-    # Unplaced story illustrations are kept in a separate review section.
-    # Deduplicate them against beat-assigned candidates and each other.
-    retained_unplaced = []
-    for candidate in unplaced_story_illustrations:
-        digest = candidate.get("decoded_pixels_sha256")
-        if digest and digest in seen_pixels:
-            candidate["review_status"] = "rejected_duplicate"
-            candidate["duplicate_of"] = seen_pixels[digest]
-            candidate["approved"] = False
-            rejected.append({
-                "scene_id": candidate.get("story_beat_id"),
-                "visual_role": "exact_story_illustration",
-                "reason": "duplicate of an already listed image; not counted twice",
-                "title": candidate.get("title", ""),
-                "source_url": candidate.get("source_url", ""),
-                "duplicate_of": seen_pixels[digest],
-                "approved": False,
-            })
-            continue
-        if digest:
-            seen_pixels[digest] = candidate.get("candidate_id", digest)
-        retained_unplaced.append(candidate)
-    unplaced_story_illustrations = retained_unplaced
 
     for seed in seed_images:
         matching = next((c for r in results for c in r["candidates"]
@@ -463,11 +465,11 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         "all_candidates_approved": False,
         "clip_threshold": 0.22,
         "source_size_gate": "short side >= 1080 px; long side >= 1920 px; existing max-upscale <= 1.25; no enlargement performed",
-        "coverage_interpretation": "Exact story illustrations are tracked separately. Symbolic visuals may be atmospheric or object-led; they must pass at least one scene-relevant metadata anchor plus the existing CLIP and technical gates.",
+        "coverage_interpretation": "Story-identified illustrations are assigned to their strongest scene by curated source mapping or per-beat CLIP ranking. Symbolic visuals must pass a scene-relevant metadata anchor, illustrated-art style gate, CLIP relevance and all existing technical gates. Every item remains unapproved.",
         "recommendation": (
-            "The nine-beat episode still needs human review of the available atmospheric visuals; do not reject a suitable image merely because it is not a literal story illustration."
+            "Some beats still need story-specific or symbolic artwork; review all candidates and fill any uncovered beats."
             if uncovered_ids else
-            "Every beat has an automatically qualified exact or symbolic visual; human review and approval are still required."
+            "Every beat has at least one story-specific or scene-relevant illustrated candidate; confirm each placement and approve the chosen images."
         ),
     }
     manifest = {
@@ -484,9 +486,9 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
             "Library of Congress API",
         ],
         "visual_policy": {
-            "exact_story_illustration": "Rumpelstiltskin/Rumpelstilzchen or a documented historical title alias must appear in source metadata/categories; CLIP alone cannot establish identity.",
-            "symbolic_contextual_asset": "Must match at least one scene-relevant object, setting or mood anchor and pass existing CLIP and technical gates; it is contextual atmosphere, not proof of a literal story scene.",
-            "unrelated_contextual_art": "Fails story-identity and symbolic requirements or matches an unrelated-subject marker; excluded from coverage.",
+            "exact_story_illustration": "Rumpelstiltskin/Rumpelstilzchen or a documented historical title alias must appear in source metadata/categories. Beat placement uses explicit curated source mapping, matching scene metadata, or per-beat CLIP ranking; human confirmation is still required.",
+            "symbolic_contextual_asset": "Must match a scene-relevant object, setting or mood anchor, pass the fairytale illustration-vs-photograph CLIP gate, and pass all existing technical gates; it is contextual atmosphere, not proof of a literal story scene.",
+            "unrelated_contextual_art": "Fails story identity, illustrated-art style, or beat relevance; excluded from coverage.",
             "unverified_story_identity": "Metadata without a story identity anchor is rejected from exact coverage even when CLIP passes.",
         },
         "seeds": seed_images,
@@ -514,8 +516,9 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
         "# Rumpelstiltskin visual coverage report",
         "",
         f"- Beats with exact story illustrations: **{coverage['beats_with_exact_story_illustrations']}/{len(results)}**",
+        f"- Story-specific candidates awaiting visual placement review: **{coverage['beats_with_story_illustration_candidates_for_human_placement']}/{len(results)}**",
         f"- Beats with suitable symbolic assets: **{coverage['beats_with_suitable_symbolic_assets']}/{len(results)}**",
-        f"- Beats with any automatically qualified visual: **{coverage['beats_with_any_automatic_candidates']}/{len(results)}**",
+        f"- Beats with any automatic candidates for human review: **{coverage['beats_with_any_automatic_candidates']}/{len(results)}**",
         f"- Beats lacking a usable visual: **{coverage['beats_lacking_usable_visual']}/{len(results)}**",
         "",
         "## Exact story illustration beats",
@@ -538,8 +541,8 @@ def run(plan_path: Path, out: Path) -> dict[str, Any]:
     (out / "coverage-report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
     (out / "README.txt").write_text(
         "Review artifact only. No image is approved and no MP4 was rendered.\n"
-        "Exact story illustrations require a Rumpelstiltskin story identity anchor in source metadata.\n"
-        "Symbolic assets can be atmospheric or object-led; they need one relevant visual anchor and must pass existing CLIP and technical gates.\n"
+        "Exact story illustrations require a Rumpelstiltskin story identity anchor in source metadata; beat placement is curated or CLIP-ranked and still requires human confirmation.\n"
+        "Symbolic assets can be atmospheric or object-led; they must match a scene anchor, pass the illustrated-art style gate, and pass existing CLIP and technical gates.\n"
         "Unrelated, unverified, low-resolution, text-heavy, duplicate, rights-failing, or CLIP-failing material is rejected or reported as uncertain.\n"
         "See provenance-manifest.json and coverage-report.md for honest counts and source provenance.\n",
         encoding="utf-8")
