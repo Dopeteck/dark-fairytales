@@ -1,6 +1,13 @@
 name: Generate fairytale scene artwork
 
 on:
+  push:
+    branches:
+      - feature/dark-folklore-shorts
+    paths:
+      - "destination-prototype/generate_fairytale_scenes.py"
+      - "tests/test_generate_fairytale_scenes.py"
+      - ".github/workflows/generate-fairytale-scenes.yml"
   workflow_dispatch:
     inputs:
       steps:
@@ -18,8 +25,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tests:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/dark-folklore-shorts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install "requests>=2.31" "Pillow>=10"
+      - name: Run generator tests
+        run: python -m unittest discover -s tests -p "test_generate_fairytale_scenes.py" -v
+      - name: Compile generator
+        run: python -m py_compile destination-prototype/generate_fairytale_scenes.py
+
   generate:
-    if: github.ref == 'refs/heads/feature/dark-folklore-shorts'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/dark-folklore-shorts'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -27,15 +52,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: feature/dark-folklore-shorts
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install image generation dependencies
         run: python -m pip install "requests>=2.31" "Pillow>=10"
-
       - name: Check Cloudflare credentials
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -43,10 +65,6 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "::error::Missing repository secret CLOUDFLARE_ACCOUNT_ID"; exit 1)
           test -n "$CLOUDFLARE_API_TOKEN" || (echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN"; exit 1)
-
-      - name: Run offline generator tests
-        run: python -m unittest tests/test_generate_fairytale_scenes.py -v
-
       - name: Generate nine review-only scene images
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -56,7 +74,6 @@ jobs:
             --plan research/rumpelstiltskin-pilot.json \
             --output output/rumpelstiltskin-generated-scenes \
             --steps "${{ inputs.steps }}"
-
       - name: Upload unapproved scene artwork
         if: always()
         uses: actions/upload-artifact@v4
