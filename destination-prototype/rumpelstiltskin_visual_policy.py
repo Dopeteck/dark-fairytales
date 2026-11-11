@@ -54,6 +54,13 @@ UNSUITABLE_PHOTO_MARKERS = (
     "albumen print", "gelatin silver print", "cabinet card",
     "daguerreotype", "ambrotype", "carte de visite",
 )
+UNSUITABLE_OBJECT_MARKERS = (
+    "sculpture", "statuette", "statue", "terracotta", "cartouche",
+    "museum object", "archaeological object", "artifact", "artefact",
+    "brick", "bust", "figurine", "vessel",
+)
+SYMBOLIC_MIN_CLIP_SCORE = 0.28
+SYMBOLIC_MIN_ILLUSTRATION_SCORE = 0.55
 
 # Every group must have at least one metadata match. These are deliberately
 # conservative; an empty result is preferable to using unrelated historical art.
@@ -146,18 +153,42 @@ def candidate_metadata_text(candidate: dict[str, Any]) -> str:
     return _normalise(" ".join(str(v) for v in values if v is not None))
 
 
-def exact_scene_match_status(candidate: dict[str, Any], beat_id: str) -> tuple[str, list[str]]:
-    """Return metadata, curated-source, or CLIP-review placement evidence for this beat."""
-    text = candidate_metadata_text(candidate)
+def curated_beat_for_candidate(candidate: dict[str, Any]) -> str | None:
+    """Return a curated destination for an inspected, story-specific source."""
     visual = candidate.get("visual_metadata") or {}
     source_evidence = " ".join(str(value or "") for value in (
         candidate.get("title"), candidate.get("source_url"),
         candidate.get("identifier"), candidate.get("seed_file_title"),
         visual.get("identifier"),
     ))
+    normalised = _normalise(source_evidence)
     for source_hint, assigned_beat in CURATED_STORY_BEAT_ASSIGNMENTS.items():
-        if assigned_beat == beat_id and _contains(_normalise(source_evidence), source_hint):
-            return "curated_story_beat_match", []
+        if _contains(normalised, source_hint):
+            return assigned_beat
+    return None
+
+
+def candidate_primary_metadata_text(candidate: dict[str, Any]) -> str:
+    """Use item titles/tags, not incidental words buried in long descriptions."""
+    visual = candidate.get("visual_metadata") or {}
+    values = [
+        candidate.get("title", ""),
+        *candidate.get("categories", []),
+        *candidate.get("facets", []),
+        *visual.get("categories", []),
+        *visual.get("facets", []),
+        visual.get("medium", ""),
+        visual.get("object_type", ""),
+    ]
+    return _normalise(" ".join(str(v) for v in values if v is not None))
+
+
+def exact_scene_match_status(candidate: dict[str, Any], beat_id: str) -> tuple[str, list[str]]:
+    """Return metadata, curated-source, or CLIP-review placement evidence for this beat."""
+    text = candidate_metadata_text(candidate)
+    curated_target = curated_beat_for_candidate(candidate)
+    if curated_target == beat_id:
+        return "curated_story_beat_match", []
     groups = EXACT_SCENE_REQUIREMENTS.get(beat_id, [])
     missing = [
         " / ".join(group)
@@ -167,29 +198,50 @@ def exact_scene_match_status(candidate: dict[str, Any], beat_id: str) -> tuple[s
     return ("metadata_scene_match", []) if not missing else ("story_identity_only_unplaced", missing)
 
 
-def classify_candidate(candidate: dict[str, Any], beat_id: str) -> str:
-    """Return exact, relevant-symbolic, or unrelated based on source metadata.
+def classify_candidate(candidate: dict[str, Any], beat_id: str, visual_mode: str = "symbolic") -> str:
+    """Classify story identity separately from contextual fairytale artwork.
 
-    CLIP, a licence, historical age, and a generic scene keyword are not proof
-    that an image illustrates this story. A story alias in source metadata is
-    the minimum exact-story provenance anchor.
+    Exact-story items are grounded in a story title/category. Symbolic items
+    must independently pass the resolver's illustration-style and CLIP gates,
+    then have a relevant anchor in the item's title or catalogue tags. Long
+    descriptions are deliberately excluded from symbolic keyword matching:
+    incidental mentions such as "daughter of a king" must not validate a brick,
+    photograph, or unrelated object.
     """
     text = candidate_metadata_text(candidate)
+    if any(_contains(text, alias) for alias in STORY_ALIASES):
+        return "exact_story_illustration"
+    if visual_mode == "exact":
+        return "unrelated_contextual_art"
+
     style_score = candidate.get("p_fairytale_illustration")
-    if style_score is not None:
+    if style_score is None:
+        checks = candidate.get("automatic_checks") or {}
+        if checks.get("fairytale_illustration") != "passed":
+            return "unrelated_contextual_art"
+    else:
         try:
-            if float(style_score) < 0.5:
+            if float(style_score) < SYMBOLIC_MIN_ILLUSTRATION_SCORE:
                 return "unrelated_contextual_art"
         except (TypeError, ValueError):
             return "unrelated_contextual_art"
-    if any(_contains(text, alias) for alias in STORY_ALIASES):
-        return "exact_story_illustration"
-    if any(_contains(text, marker) for marker in UNRELATED_SUBJECT_MARKERS):
+
+    try:
+        if float(candidate.get("clip_score") or 0.0) < SYMBOLIC_MIN_CLIP_SCORE:
+            return "unrelated_contextual_art"
+    except (TypeError, ValueError):
         return "unrelated_contextual_art"
-    if any(_contains(text, marker) for marker in UNSUITABLE_PHOTO_MARKERS):
+
+    primary_text = candidate_primary_metadata_text(candidate)
+    if any(_contains(primary_text, marker) for marker in UNRELATED_SUBJECT_MARKERS):
         return "unrelated_contextual_art"
+    if any(_contains(primary_text, marker) for marker in UNSUITABLE_PHOTO_MARKERS):
+        return "unrelated_contextual_art"
+    if any(_contains(primary_text, marker) for marker in UNSUITABLE_OBJECT_MARKERS):
+        return "unrelated_contextual_art"
+
     groups = SYMBOLIC_REQUIREMENTS.get(beat_id, [])
-    if groups and all(any(_contains(text, term) for term in group) for group in groups):
+    if groups and all(any(_contains(primary_text, term) for term in group) for group in groups):
         return "symbolic_contextual_asset"
     return "unrelated_contextual_art"
 
