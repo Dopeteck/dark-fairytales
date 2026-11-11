@@ -36,6 +36,7 @@ STORY_COMMONS_CATEGORIES = (
 CURATED_STORY_BEAT_ASSIGNMENTS = {
     "394497": "beat-03-first-bargains",  # MET: Rumpelstiltskin at the spinning wheel with the miller's daughter
     "The Blue Fairy Book, p. 97.jpg": "beat-03-first-bargains",
+    "Andrew Lang - The Blue Fairy Book p.116.png": "beat-03-first-bargains",
     "GrimmsGoblins-140-Rumpelstiltskin.jpg": "beat-09-foot-revelation",
     "Rumpelstiltskin at the Spinning-Wheel and the Dwarf MET DP827694": "beat-03-first-bargains",
 }
