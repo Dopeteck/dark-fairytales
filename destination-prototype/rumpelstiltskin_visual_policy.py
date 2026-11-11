@@ -30,6 +30,16 @@ STORY_COMMONS_CATEGORIES = (
     "Grimm's Household Tales (Edwardes, Bell)/Rumpel-Stilts-Ken",
 )
 
+# Curated placements for specific, visually inspected public-domain illustrations.
+# These are source-to-beat hints, never approvals; the review board still shows
+# the original image and requires a human to confirm the scene fit.
+CURATED_STORY_BEAT_ASSIGNMENTS = {
+    "394497": "beat-03-first-bargains",  # MET: Rumpelstiltskin at the spinning wheel with the miller's daughter
+    "The Blue Fairy Book, p. 97.jpg": "beat-03-first-bargains",
+    "GrimmsGoblins-140-Rumpelstiltskin.jpg": "beat-09-foot-revelation",
+    "Rumpelstiltskin at the Spinning-Wheel and the Dwarf MET DP827694": "beat-03-first-bargains",
+}
+
 UNRELATED_SUBJECT_MARKERS = (
     "king lear", "queen victoria", "mary queen of scots",
     "madonna", "virgin mary", "jesus", "christ child", "nativity",
@@ -77,15 +87,24 @@ SYMBOLIC_REQUIREMENTS: dict[str, list[list[str]]] = {
 }
 
 SYMBOLIC_SEARCH_TERMS: dict[str, list[str]] = {
-    "beat-01-threat": ["antique straw bundle spinning wheel engraving", "historical spinning wheel straw illustration"],
-    "beat-02-boast": ["historical miller and daughter engraving", "antique miller daughter illustration"],
-    "beat-03-first-bargains": ["antique spinning wheel straw gold illustration", "historical spinning wheel golden straw engraving"],
-    "beat-04-king-demands": ["antique king straw spinning chamber illustration", "historical royal chamber straw spinning wheel"],
-    "beat-05-child-pact": ["antique cradle infant historical illustration", "antique wooden cradle baby engraving"],
-    "beat-06-claim": ["historical queen infant cradle illustration", "antique queen with child engraving"],
-    "beat-07-three-days": ["antique messenger forest illustration", "historical courier woodland engraving"],
-    "beat-08-forest-fire": ["antique forest fire bonfire illustration", "historical woodland fire engraving"],
-    "beat-09-foot-revelation": ["antique foot wooden floor illustration", "historical foot floorboards engraving"],
+    "beat-01-threat": ["miller's daughter locked in a dark castle chamber fairy tale book illustration",
+                       "king threatens girl spinning straw antique storybook engraving"],
+    "beat-02-boast": ["miller boasting to a king about his daughter illustrated fairy tale",
+                      "poor miller and daughter village cottage antique book illustration"],
+    "beat-03-first-bargains": ["miller's daughter spinning wheel little dwarf golden straw fairy tale engraving",
+                               "mysterious little man helping girl spin straw into gold storybook illustration"],
+    "beat-04-king-demands": ["greedy king beside heaps of straw and spinning wheel antique fairy tale illustration",
+                             "medieval king throne candlelit chamber storybook engraving"],
+    "beat-05-child-pact": ["queen makes a bargain for her first child fairy tale illustration",
+                           "royal cradle and golden necklace antique storybook engraving"],
+    "beat-06-claim": ["fairy tale queen holding newborn baby in royal chamber antique illustration",
+                      "little goblin demanding a child from queen storybook engraving"],
+    "beat-07-three-days": ["queen sends messenger to discover a mysterious man's name fairy tale engraving",
+                           "royal messenger riding through moonlit forest antique storybook illustration"],
+    "beat-08-forest-fire": ["tiny goblin dancing around a bonfire in dark forest fairy tale illustration",
+                            "mysterious little man dancing beside flames woodland storybook engraving"],
+    "beat-09-foot-revelation": ["rumpelstiltskin stamping foot through wooden floor fairy tale illustration",
+                               "angry little goblin stuck in floorboards antique storybook engraving"],
 }
 
 EXACT_SEARCH_TERMS = [
@@ -128,13 +147,13 @@ def candidate_metadata_text(candidate: dict[str, Any]) -> str:
 
 
 def exact_scene_match_status(candidate: dict[str, Any], beat_id: str) -> tuple[str, list[str]]:
-    """Check whether exact-story metadata also identifies this beat's visual.
-
-    Story identity and beat identity are different facts. A book-category hit
-    proves tale provenance, but a generic category alone cannot place an image
-    in a particular narrated scene.
-    """
+    """Return metadata, curated-source, or CLIP-review placement evidence for this beat."""
     text = candidate_metadata_text(candidate)
+    source_evidence = " ".join(str(candidate.get(k, "")) for k in
+                               ("title", "source_url", "identifier", "seed_file_title"))
+    for source_hint, assigned_beat in CURATED_STORY_BEAT_ASSIGNMENTS.items():
+        if assigned_beat == beat_id and _contains(_normalise(source_evidence), source_hint):
+            return "curated_story_beat_match", []
     groups = EXACT_SCENE_REQUIREMENTS.get(beat_id, [])
     missing = [
         " / ".join(group)
@@ -152,6 +171,13 @@ def classify_candidate(candidate: dict[str, Any], beat_id: str) -> str:
     the minimum exact-story provenance anchor.
     """
     text = candidate_metadata_text(candidate)
+    style_score = candidate.get("p_fairytale_illustration")
+    if style_score is not None:
+        try:
+            if float(style_score) < 0.5:
+                return "unrelated_contextual_art"
+        except (TypeError, ValueError):
+            return "unrelated_contextual_art"
     if any(_contains(text, alias) for alias in STORY_ALIASES):
         return "exact_story_illustration"
     if any(_contains(text, marker) for marker in UNRELATED_SUBJECT_MARKERS):
@@ -179,10 +205,12 @@ def build_review_scene(raw: dict[str, Any], index: int, visual_mode: str, seed_f
             "named_entities": ["Rumpelstiltskin"],
             "identity_aliases": list(STORY_ALIASES[1:]),
             "identity_fallback_to_clip": False,
+            "require_fairytale_illustration": True,
+            "min_fairytale_illustration_score": 0.5,
             "commons_categories": list(STORY_COMMONS_CATEGORIES),
             "image_search_terms": list(dict.fromkeys([*EXACT_SEARCH_TERMS, *requirement.get("search_terms", [])])),
-            "visual_tags": [visual, "Rumpelstiltskin exact historical fairy-tale illustration"],
-            "visual_caption": f"An actual historical illustration from the Rumpelstiltskin tale showing {visual}",
+            "visual_tags": [visual, "antique Rumpelstiltskin fairy-tale book engraving"],
+            "visual_caption": f"A public-domain antique illustrated Rumpelstiltskin storybook scene showing {visual}",
             "narration_intent": f"{raw.get('evidence', '')} Tale identity is required in source metadata. Scene: {visual}",
             "required_keywords": [],
             "required_keyword_groups": [],
@@ -196,9 +224,11 @@ def build_review_scene(raw: dict[str, Any], index: int, visual_mode: str, seed_f
         "id": f"{sid}-symbolic",
         "title": raw.get("title", sid),
         "image_type": "historic",
+        "require_fairytale_illustration": True,
+        "min_fairytale_illustration_score": 0.5,
         "image_search_terms": list(SYMBOLIC_SEARCH_TERMS.get(sid, [])),
-        "visual_tags": [visual, "antique symbolic object or setting illustration"],
-        "visual_caption": f"A genuine antique visual specifically showing {visual}",
+        "visual_tags": [visual, "antique fairy-tale book engraving or woodcut"],
+        "visual_caption": f"An antique fairy-tale book illustration showing {visual}",
         "narration_intent": f"Symbolic contextual asset only; it must depict the required objects/settings: {visual}",
         "required_keywords": [],
         "required_keyword_groups": SYMBOLIC_REQUIREMENTS.get(sid, []),
@@ -211,6 +241,7 @@ def build_review_scene(raw: dict[str, Any], index: int, visual_mode: str, seed_f
 
 def summarize_visual_coverage(beats: list[dict[str, Any]]) -> dict[str, Any]:
     exact_ids: list[str] = []
+    story_review_ids: list[str] = []
     symbolic_ids: list[str] = []
     any_ids: list[str] = []
     uncovered: list[str] = []
@@ -222,15 +253,22 @@ def summarize_visual_coverage(beats: list[dict[str, Any]]) -> dict[str, Any]:
         ]
         exact_usable = any(
             c.get("visual_role") == "exact_story_illustration"
-            and c.get("scene_match_status") == "metadata_scene_match"
+            and c.get("scene_match_status") in ("metadata_scene_match", "curated_story_beat_match")
+            for c in candidates
+        )
+        story_review = any(
+            c.get("visual_role") == "exact_story_illustration"
+            and c.get("scene_match_status") == "clip_ranked_human_review"
             for c in candidates
         )
         symbolic_usable = any(c.get("visual_role") == "symbolic_contextual_asset" for c in candidates)
         if exact_usable:
             exact_ids.append(beat_id)
+        if story_review:
+            story_review_ids.append(beat_id)
         if symbolic_usable:
             symbolic_ids.append(beat_id)
-        if exact_usable or symbolic_usable:
+        if exact_usable or story_review or symbolic_usable:
             any_ids.append(beat_id)
         else:
             uncovered.append(beat_id)
@@ -247,6 +285,8 @@ def summarize_visual_coverage(beats: list[dict[str, Any]]) -> dict[str, Any]:
         )),
         "beats_with_exact_story_illustrations": len(exact_ids),
         "exact_story_illustration_beat_ids": exact_ids,
+        "beats_with_story_illustration_candidates_for_human_placement": len(story_review_ids),
+        "story_illustration_candidate_beat_ids": story_review_ids,
         "beats_with_suitable_symbolic_assets": len(symbolic_ids),
         "symbolic_asset_beat_ids": symbolic_ids,
         "beats_with_any_automatic_candidates": len(any_ids),
