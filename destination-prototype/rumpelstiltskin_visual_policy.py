@@ -311,8 +311,9 @@ def build_review_scene(raw: dict[str, Any], index: int, visual_mode: str, seed_f
             "required_keyword_groups": [],
             "identity_keyword_groups": [],
             "seed_commons_files": list(seed_files or []),
+            "search_terms_first": True,
             "max_queries": 8,
-            "max_queries_per_provider": 3,
+            "max_queries_per_provider": 4,
         }
 
     return {
