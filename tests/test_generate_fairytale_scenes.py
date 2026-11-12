@@ -27,7 +27,7 @@ class GeneratorTests(unittest.TestCase):
             ],
         }
         buffer = io.BytesIO()
-        Image.new("RGB", (32, 32), (12, 34, 56)).save(buffer, format="JPEG")
+        Image.new("RGB", (832, 1472), (12, 34, 56)).save(buffer, format="JPEG", quality=82)
         self.image_bytes = buffer.getvalue()
         self.image_b64 = base64.b64encode(self.image_bytes).decode("ascii")
 
