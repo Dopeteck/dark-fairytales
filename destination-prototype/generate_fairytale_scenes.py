@@ -20,7 +20,8 @@ from typing import Any
 import requests
 from PIL import Image
 
-MODEL_ID = "@cf/black-forest-labs/flux-2-klein-9b"
+MODEL_ID = "@cf/black-forest-labs/flux-2-klein-4b"
+RUMPELSTILTSKIN_MODEL_ID = "@cf/black-forest-labs/flux-2-klein-9b"
 API_ROOT = "https://api.cloudflare.com/client/v4/accounts"
 OUTPUT_WIDTH = 832
 OUTPUT_HEIGHT = 1472
@@ -164,13 +165,14 @@ def generate_one(
     api_token: str,
     reference_image: bytes | None = None,
     scale_reference_image: bytes | None = None,
+    model_id: str = MODEL_ID,
     width: int = OUTPUT_WIDTH,
     height: int = OUTPUT_HEIGHT,
     guidance: float = 4.0,
     session: Any = requests,
 ) -> bytes:
     """Generate with FLUX.2 Klein 4B using multipart inputs and optional character reference."""
-    url = f"{API_ROOT}/{account_id}/ai/run/{MODEL_ID}"
+    url = f"{API_ROOT}/{account_id}/ai/run/{model_id}"
     fields = [
         ("prompt", (None, prompt)),
         ("width", (None, str(width))),
@@ -245,7 +247,10 @@ def run(
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, Any] = {
         "story": plan.get("title", plan.get("series", "Untitled story")),
-        "model": MODEL_ID,
+        "model_strategy": {
+            "character_scenes": RUMPELSTILTSKIN_MODEL_ID,
+            "other_scenes": MODEL_ID,
+        },
         "width": OUTPUT_WIDTH,
         "height": OUTPUT_HEIGHT,
         "status": "generated_unapproved_review_only",
@@ -260,14 +265,17 @@ def run(
     for index, scene in enumerate(scenes, 1):
         scene_id = str(scene["id"])
         prompt = build_prompt(scene, index)
-        scene_reference = reference_bytes if scene_id in RUMPELSTILTSKIN_SCENES else None
-        scene_scale_reference = scale_reference_bytes if scene_id in RUMPELSTILTSKIN_SCENES else None
+        is_character_scene = scene_id in RUMPELSTILTSKIN_SCENES
+        scene_reference = reference_bytes if is_character_scene else None
+        scene_scale_reference = scale_reference_bytes if is_character_scene else None
+        scene_model_id = RUMPELSTILTSKIN_MODEL_ID if is_character_scene else MODEL_ID
         data = generate_one(
             prompt,
             account_id,
             api_token,
             reference_image=scene_reference,
             scale_reference_image=scene_scale_reference,
+            model_id=scene_model_id,
         )
 
         with Image.open(io.BytesIO(data)) as image:
@@ -292,6 +300,7 @@ def run(
             "bytes": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "model": scene_model_id,
             "uses_character_reference": scene_reference is not None,
             "uses_scale_reference": scene_scale_reference is not None,
             "approved": False,
