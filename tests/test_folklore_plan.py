@@ -15,8 +15,8 @@ class FolklorePlanTests(unittest.TestCase):
     def test_pilot_is_source_bound_and_meets_short_format(self):
         result = validate_folklore_plan(self.plan)
         self.assertEqual(len(result["scenes"]), 9)
-        self.assertEqual(result["narration_word_count"], 134)
-        self.assertGreaterEqual(result["target_duration_seconds"], 45)
+        self.assertEqual(result["narration_word_count"], 224)
+        self.assertGreaterEqual(result["target_duration_seconds"], 70)
         self.assertTrue(all(scene["source_ids"] for scene in result["scenes"]))
 
     def test_missing_source_rejected(self):
@@ -36,7 +36,7 @@ class FolklorePlanTests(unittest.TestCase):
 
     def test_duration_and_word_count_limits(self):
         self.plan["narration"] = "Too short."
-        with self.assertRaisesRegex(ValueError, "120–140"):
+        with self.assertRaisesRegex(ValueError, "150–235"):
             validate_folklore_plan(self.plan)
 
 
