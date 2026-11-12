@@ -106,18 +106,36 @@ def assemble(plan_path: Path, images_dir: Path, identity_reference: Path, scale_
             if reference.width >= 512 or reference.height >= 512:
                 raise ValueError(f"{label} reference image must be strictly smaller than 512x512")
 
+    existing_manifest_path = images_dir / "generation-manifest.json"
+    existing_rows = {}
+    if existing_manifest_path.is_file():
+        try:
+            existing_manifest = json.loads(existing_manifest_path.read_text(encoding="utf-8"))
+            existing_rows = {
+                str(row.get("scene_id")): row
+                for row in existing_manifest.get("images", [])
+                if isinstance(row, dict)
+            }
+        except (OSError, json.JSONDecodeError):
+            existing_rows = {}
+
     rows = []
     for index, scene in enumerate(scenes[:-1], 1):
         scene_id = str(scene["id"])
-        stem = f"{index:02d}-{scene_id}"
-        candidates = [images_dir / f"{stem}{ext}" for ext in (".jpg", ".jpeg", ".png", ".webp")]
+        candidates = sorted(
+            path for path in images_dir.glob(f"*-{scene_id}.*")
+            if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+        )
         image_path = next((path for path in candidates if path.is_file()), None)
         if image_path is None:
             raise ValueError(f"Missing existing generated scene: {scene_id}")
         width, height, fmt, data = _verify_portrait(image_path)
         character_scene = scene_id in RUMPELSTILTSKIN_SCENES
         model_id = RUMPELSTILTSKIN_MODEL_ID if character_scene else MODEL_ID
-        prompt = build_prompt(scene, index)
+        previous = existing_rows.get(scene_id, {})
+        prompt_hash = previous.get("prompt_sha256") or hashlib.sha256(
+            build_prompt(scene, index).encode("utf-8")
+        ).hexdigest()
         rows.append({
             "scene_id": scene_id,
             "title": scene.get("title", scene_id),
@@ -167,7 +185,7 @@ def assemble(plan_path: Path, images_dir: Path, identity_reference: Path, scale_
 
     manifest = {
         "story": plan.get("title", plan.get("series", "Untitled story")),
-        "model_strategy": {
+        "model_strategy": (existing_manifest.get("model_strategy") if existing_rows else None) or {
             "character_scenes": RUMPELSTILTSKIN_MODEL_ID,
             "other_scenes": MODEL_ID,
             "final_scene": "symbolic crop derived from beat-08-forest-fire",
