@@ -198,7 +198,7 @@ def make_ambient(path: Path, duration: float) -> None:
     airy = np.convolve(noise, kernel, mode="same")
     peak = max(1e-6, float(np.max(np.abs(airy))))
     bed += (airy / peak) * 0.0025
-    fade = min(RATE * 1.5, count // 3)
+    fade = min(int(RATE * 1.5), count // 3)
     if fade:
         bed[:fade] *= np.linspace(0.0, 1.0, fade, dtype=np.float32)
         bed[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
