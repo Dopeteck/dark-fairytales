@@ -86,14 +86,21 @@ jobs:
 
       - name: Reuse already generated scenes
         run: |
-          mkdir -p output/rumpelstiltskin-generated-scenes
-          if [ -d output/partial-source/rumpelstiltskin-generated-scenes ]; then
-            find output/partial-source/rumpelstiltskin-generated-scenes -maxdepth 1 -type f \\
-              \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \\) \\
-              -exec cp -n {} output/rumpelstiltskin-generated-scenes/ \\;
-          fi
-          echo "Verified candidates to resume:"
-          find output/rumpelstiltskin-generated-scenes -maxdepth 1 -type f | sort || true
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          source = Path("output/partial-source/rumpelstiltskin-generated-scenes")
+          destination = Path("output/rumpelstiltskin-generated-scenes")
+          destination.mkdir(parents=True, exist_ok=True)
+          if source.is_dir():
+              for path in sorted(source.iterdir()):
+                  if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+                      target = destination / path.name
+                      if not target.exists():
+                          shutil.copy2(path, target)
+                          print(f"Restored partial scene: {path.name}")
+          print("Partial scenes available:", len(list(destination.glob("*.jpg"))) + len(list(destination.glob("*.jpeg"))) + len(list(destination.glob("*.png"))) + len(list(destination.glob("*.webp"))))
+          PY
 
       - name: Run image-generation tests and compile both pipelines
         run: |
@@ -118,7 +125,7 @@ jobs:
             --plan research/rumpelstiltskin-pilot.json \
             --reference-image output/character-reference/rumpelstiltskin.png \
             --scale-reference-image output/character-reference/height-scale.png \
-            --output output/rumpelstiltskin-generated-scenes \\\n            --resume
+            --output output/rumpelstiltskin-generated-scenes --resume
 
       - name: Generate only the child-pact pilot
         if: github.event_name == 'workflow_dispatch' && inputs.scope == 'pilot'
