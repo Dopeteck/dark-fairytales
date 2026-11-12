@@ -107,25 +107,14 @@ jobs:
           python -m unittest discover -s tests -p "test_generate_fairytale_scenes.py" -v
           python -m py_compile destination-prototype/generate_fairytale_scenes.py destination-prototype/render_fairytale_video.py
 
-      - name: Check Cloudflare credentials
+      - name: Check Cloudflare credentials (manual pilot only)
+        if: github.event_name == 'workflow_dispatch' && inputs.scope == 'pilot'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "::error::Missing repository secret CLOUDFLARE_ACCOUNT_ID"; exit 1)
           test -n "$CLOUDFLARE_API_TOKEN" || (echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN"; exit 1)
-
-      - name: Generate the complete nine-scene episode artwork
-        if: github.event_name == 'push' || inputs.scope == 'full-episode'
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          python destination-prototype/generate_fairytale_scenes.py \
-            --plan research/rumpelstiltskin-pilot.json \
-            --reference-image output/character-reference/rumpelstiltskin.png \
-            --scale-reference-image output/character-reference/height-scale.png \
-            --output output/rumpelstiltskin-generated-scenes --resume
 
       - name: Generate only the child-pact pilot
         if: github.event_name == 'workflow_dispatch' && inputs.scope == 'pilot'
@@ -139,6 +128,16 @@ jobs:
             --scale-reference-image output/character-reference/height-scale.png \
             --only-scene beat-05-child-pact \
             --output output/rumpelstiltskin-generated-scenes
+
+      - name: Assemble the symbolic finale and complete nine-scene review manifest
+        if: github.event_name == 'push' || inputs.scope == 'full-episode'
+        run: |
+          python -m unittest discover -s tests -p "test_assemble_symbolic_fairytale_review.py" -v
+          python destination-prototype/assemble_symbolic_fairytale_review.py \
+            --plan research/rumpelstiltskin-pilot.json \
+            --images output/rumpelstiltskin-generated-scenes \
+            --identity-reference output/character-reference/rumpelstiltskin.png \
+            --scale-reference output/character-reference/height-scale.png
 
       - name: Install renderer system dependencies
         if: github.event_name == 'push' || inputs.scope == 'full-episode'
