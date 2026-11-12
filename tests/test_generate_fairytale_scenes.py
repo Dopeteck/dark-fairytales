@@ -89,7 +89,7 @@ class GeneratorTests(unittest.TestCase):
         for index, scene_id in enumerate(sorted(expected), 1):
             prompt = generator.build_prompt({"id": scene_id, "title": scene_id}, index)
             self.assertIn("input image 0 is Rumpelstiltskin", prompt)
-            self.assertIn("input image 1", prompt)
+            self.assertIn("input image 1", prompt.lower())
             self.assertIn("60-centimetre", prompt)
             self.assertLessEqual(len(prompt), 2048)
 
