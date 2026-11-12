@@ -45,9 +45,9 @@ jobs:
       - name: Download previously generated character reference source
         uses: actions/download-artifact@v4
         with:
-          name: rumpelstiltskin-reference-pilot-43235607000
+          name: rumpelstiltskin-reference-pilot-43241256340
           path: output/reference-source
-          run-id: 43235607000
+          run-id: 43241256340
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Prepare 512px Rumpelstiltskin character reference
@@ -64,12 +64,44 @@ jobs:
           with Image.open(source) as original:
               image = original.convert("RGB")
               # Isolate the full dwarf, including his cap, beard, costume and shoes.
-              crop = image.crop((505, 520, 832, 1435))
+              crop = image.crop((430, 250, 832, 1440))
               crop.thumbnail((218, 510), Image.Resampling.LANCZOS)
               canvas = Image.new("RGB", (510, 510), (95, 91, 84))
               canvas.paste(crop, ((510 - crop.width) // 2, (510 - crop.height) // 2))
               canvas.save(out, format="PNG")
-          print(f"Prepared character reference: {out} ({out.stat().st_size} bytes)")
+
+          # A separate, style-neutral scale guide. The two silhouettes share a
+          # baseline; the dwarf is ~40% of the adult woman's height.
+          from PIL import ImageDraw
+          guide = Image.new("RGB", (510, 510), (225, 221, 211))
+          draw = ImageDraw.Draw(guide)
+          ground = 470
+          color = (47, 48, 47)
+          # Adult woman, approximately 430px high.
+          draw.ellipse((330, 35, 394, 99), fill=color)
+          draw.polygon([(315, 105), (410, 105), (430, 340), (295, 340)], fill=color)
+          draw.line((325, 145, 275, 270), fill=color, width=22)
+          draw.line((400, 145, 450, 265), fill=color, width=22)
+          draw.line((330, 330, 318, ground), fill=color, width=25)
+          draw.line((395, 330, 407, ground), fill=color, width=25)
+          draw.line((292, ground, 335, ground), fill=color, width=18)
+          draw.line((397, ground, 437, ground), fill=color, width=18)
+          # Tiny folkloric dwarf, approximately 170px high, red-cap profile.
+          draw.polygon([(135, 290), (160, 220), (185, 290)], fill=color)
+          draw.ellipse((137, 276, 185, 324), fill=color)
+          draw.polygon([(127, 320), (194, 320), (205, 390), (115, 390)], fill=color)
+          draw.line((133, 345, 100, 398), fill=color, width=13)
+          draw.line((190, 345, 221, 398), fill=color, width=13)
+          draw.line((137, 383, 130, ground), fill=color, width=15)
+          draw.line((185, 383, 194, ground), fill=color, width=15)
+          draw.line((112, ground, 145, ground), fill=color, width=12)
+          draw.line((185, ground, 216, ground), fill=color, width=12)
+          draw.line((40, ground + 10, 470, ground + 10), fill=(100, 95, 85), width=3)
+          scale_path = Path("output/character-reference/height-scale.png")
+          draw_guide = guide
+          draw_guide.save(scale_path, format="PNG")
+          print(f"Prepared character identity reference: {out} ({out.stat().st_size} bytes)")
+          print(f"Prepared independent height scale reference: {scale_path} ({scale_path.stat().st_size} bytes)")
           PY
 
       - name: Test prompts and multi-reference FLUX request schema
@@ -94,6 +126,7 @@ jobs:
           python destination-prototype/generate_fairytale_scenes.py \
             --plan research/rumpelstiltskin-pilot.json \
             --reference-image output/character-reference/rumpelstiltskin.png \
+            --scale-reference-image output/character-reference/height-scale.png \
             --only-scene beat-05-child-pact \
             --output output/rumpelstiltskin-reference-pilot
 
@@ -106,6 +139,7 @@ jobs:
           python destination-prototype/generate_fairytale_scenes.py \
             --plan research/rumpelstiltskin-pilot.json \
             --reference-image output/character-reference/rumpelstiltskin.png \
+            --scale-reference-image output/character-reference/height-scale.png \
             --output output/rumpelstiltskin-reference-pilot
 
       - name: Upload unapproved reference-conditioned artwork
