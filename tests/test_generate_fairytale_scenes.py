@@ -47,7 +47,7 @@ class GeneratorTests(unittest.TestCase):
         for required in (
             "input image 0 is Rumpelstiltskin",
             "input image 1",
-            "ONLY for a height-and-composition guide",
+            "input image 1 shows ONLY the height scale",
             "60-centimetre",
             "reaches no higher than her KNEECAP",
             "adult woman",
