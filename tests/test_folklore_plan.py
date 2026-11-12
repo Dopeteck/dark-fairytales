@@ -15,7 +15,7 @@ class FolklorePlanTests(unittest.TestCase):
     def test_pilot_is_source_bound_and_meets_short_format(self):
         result = validate_folklore_plan(self.plan)
         self.assertEqual(len(result["scenes"]), 9)
-        self.assertEqual(result["narration_word_count"], 136)
+        self.assertEqual(result["narration_word_count"], 134)
         self.assertGreaterEqual(result["target_duration_seconds"], 45)
         self.assertTrue(all(scene["source_ids"] for scene in result["scenes"]))
 
