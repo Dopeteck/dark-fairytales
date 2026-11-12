@@ -99,13 +99,13 @@
       "source_ids": [
         "grimm1857_hunt1884"
       ],
-      "evidence": "Hunt translation, KHM 55: the king takes her to a larger heap and promises she shall be queen if it is spun.",
+      "evidence": "Hunt translation, KHM 55: on the second night the king takes the daughter to another room filled with straw; the little man spins it for her ring.",
       "asset_requirement": {
         "search_terms": [
           "Rumpelstiltskin king straw chamber illustration",
           "Grimm Rumpelstilzchen king chamber engraving"
         ],
-        "must_show": "The king, daughter, straw chamber, or tale-specific illustration of the third spinning task",
+        "must_show": "The king's second straw-filled chamber and spinning wheel; the ring payment is explained in narration.",
         "style": "antique engraved storybook illustration",
         "minimum_resolution": "1920x1080",
         "status": "missing"
