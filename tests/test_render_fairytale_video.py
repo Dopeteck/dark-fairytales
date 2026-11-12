@@ -105,7 +105,9 @@ class FairytaleVideoInputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             self._create_generated_set(folder)
-            (folder / "01-beat-01-threat.jpg").unlink()
+            manifest = json.loads((folder / "generation-manifest.json").read_text())
+            first_row = manifest["images"][0]
+            (folder / first_row["file"]).unlink()
             with self.assertRaisesRegex(ValueError, "Missing generated image"):
                 load_inputs(self.plan_path, folder)
 
@@ -124,7 +126,8 @@ class FairytaleVideoInputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             self._create_generated_set(folder)
-            image_path = folder / "01-beat-01-threat.jpg"
+            manifest = json.loads((folder / "generation-manifest.json").read_text())
+            image_path = folder / manifest["images"][0]["file"]
             image_path.write_bytes(b"not-the-generated-image")
             with self.assertRaisesRegex(ValueError, "checksum mismatch"):
                 load_inputs(self.plan_path, folder)
