@@ -37,7 +37,7 @@ class GeneratorTests(unittest.TestCase):
 
     def test_prompt_contains_shared_style_and_scene_direction(self):
         prompt = generator.build_prompt(self.plan["scenes"][0], 1)
-        self.assertIn("same young adult woman", prompt)
+        self.assertIn("adult woman in her early twenties", prompt)
         self.assertIn("vast stone chamber piled high", prompt)
         self.assertIn("No lettering", prompt)
         self.assertLessEqual(len(prompt), 2048)
