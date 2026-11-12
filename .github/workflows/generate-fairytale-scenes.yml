@@ -1,4 +1,4 @@
-name: Generate fairytale scene artwork
+name: Generate and render Rumpelstiltskin review video
 
 on:
   push:
@@ -8,11 +8,11 @@ on:
       - "dispatch/generate-fairytale-scenes.txt"
   workflow_dispatch:
     inputs:
-      scene:
-        description: "Scene to generate for the reference-image pilot"
+      scope:
+        description: "Generate a single pilot or the complete nine-scene episode"
         type: choice
-        options: ["beat-05-child-pact", "all-character-scenes"]
-        default: "beat-05-child-pact"
+        options: ["pilot", "full-episode"]
+        default: "full-episode"
         required: true
 
 permissions:
@@ -20,14 +20,14 @@ permissions:
   actions: read
 
 concurrency:
-  group: fairytale-scene-generation-${{ github.ref }}
+  group: rumpelstiltskin-preview-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  generate:
+  generate-and-render:
     if: github.ref == 'refs/heads/feature/dark-folklore-shorts' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - name: Checkout feature branch
         uses: actions/checkout@v4
@@ -38,11 +38,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements-render.txt
+            requirements-voice.txt
 
-      - name: Install image generation dependencies
-        run: python -m pip install "requests>=2.31" "Pillow>=10"
+      - name: Install image-generation and test dependencies
+        run: python -m pip install "requests>=2.31" "Pillow>=10" numpy
 
-      - name: Download previously generated character reference source
+      - name: Restore reviewed-character pilot and reference guides
         uses: actions/download-artifact@v4
         with:
           name: rumpelstiltskin-reference-pilot-43242054796
@@ -50,66 +54,31 @@ jobs:
           run-id: 43242054796
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare 512px Rumpelstiltskin character reference
+      - name: Restore identity and height references
         run: |
+          set -euo pipefail
+          mkdir -p output/character-reference
+          test -s output/reference-source/character-reference/rumpelstiltskin.png
+          test -s output/reference-source/character-reference/height-scale.png
+          cp output/reference-source/character-reference/rumpelstiltskin.png output/character-reference/
+          cp output/reference-source/character-reference/height-scale.png output/character-reference/
           python - <<'PY'
-          from pathlib import Path
           from PIL import Image
-
-          source = Path("output/reference-source/rumpelstiltskin-reference-pilot/01-beat-05-child-pact.jpg")
-          if not source.is_file():
-              raise SystemExit(f"Missing character reference source: {source}")
-          out = Path("output/character-reference/rumpelstiltskin.png")
-          out.parent.mkdir(parents=True, exist_ok=True)
-          with Image.open(source) as original:
-              image = original.convert("RGB")
-              # Isolate the full dwarf, including his cap, beard, costume and shoes.
-              crop = image.crop((420, 580, 832, 1440))
-              # Reduce the isolated character within the square reference so
-              # the model learns that he is a small figure, not merely a close-up.
-              crop.thumbnail((144, 300), Image.Resampling.LANCZOS)
-              canvas = Image.new("RGB", (510, 510), (95, 91, 84))
-              canvas.paste(crop, ((510 - crop.width) // 2, (510 - crop.height) // 2))
-              canvas.save(out, format="PNG")
-
-          # A separate, style-neutral scale guide. The two silhouettes share a
-          # baseline; the dwarf is ~40% of the adult woman's height.
-          from PIL import ImageDraw
-          guide = Image.new("RGB", (510, 510), (225, 221, 211))
-          draw = ImageDraw.Draw(guide)
-          ground = 470
-          color = (47, 48, 47)
-          # Adult woman, approximately 430px high.
-          draw.ellipse((330, 35, 394, 99), fill=color)
-          draw.polygon([(315, 105), (410, 105), (430, 340), (295, 340)], fill=color)
-          draw.line((325, 145, 275, 270), fill=color, width=22)
-          draw.line((400, 145, 450, 265), fill=color, width=22)
-          draw.line((330, 330, 318, ground), fill=color, width=25)
-          draw.line((395, 330, 407, ground), fill=color, width=25)
-          draw.line((292, ground, 335, ground), fill=color, width=18)
-          draw.line((397, ground, 437, ground), fill=color, width=18)
-          # Tiny folkloric dwarf, approximately 176px high (40% of woman), red-cap profile.
-          draw.polygon([(135, 320), (160, 294), (185, 320)], fill=color)
-          draw.ellipse((137, 310, 185, 358), fill=color)
-          draw.polygon([(127, 350), (194, 350), (205, 410), (115, 410)], fill=color)
-          draw.line((133, 370, 100, 420), fill=color, width=13)
-          draw.line((190, 370, 221, 420), fill=color, width=13)
-          draw.line((137, 405, 130, ground), fill=color, width=15)
-          draw.line((185, 405, 194, ground), fill=color, width=15)
-          draw.line((112, ground, 145, ground), fill=color, width=12)
-          draw.line((185, ground, 216, ground), fill=color, width=12)
-          draw.line((40, ground + 10, 470, ground + 10), fill=(100, 95, 85), width=3)
-          scale_path = Path("output/character-reference/height-scale.png")
-          draw_guide = guide
-          draw_guide.save(scale_path, format="PNG")
-          print(f"Prepared character identity reference: {out} ({out.stat().st_size} bytes)")
-          print(f"Prepared independent height scale reference: {scale_path} ({scale_path.stat().st_size} bytes)")
+          from pathlib import Path
+          for name in ("rumpelstiltskin.png", "height-scale.png"):
+              path = Path("output/character-reference") / name
+              with Image.open(path) as image:
+                  image.verify()
+              with Image.open(path) as image:
+                  if image.width >= 512 or image.height >= 512:
+                      raise SystemExit(f"Reference image exceeds FLUX Klein's size limit: {name} {image.size}")
+                  print(name, image.size)
           PY
 
-      - name: Test prompts and multi-reference FLUX request schema
+      - name: Run full repository and fairytale input tests
         run: |
-          python -m unittest discover -s tests -p "test_generate_fairytale_scenes.py" -v
-          python -m py_compile destination-prototype/generate_fairytale_scenes.py
+          python -m unittest discover -s tests -v
+          python -m py_compile destination-prototype/generate_fairytale_scenes.py destination-prototype/render_fairytale_video.py
 
       - name: Check Cloudflare credentials
         env:
@@ -119,8 +88,20 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "::error::Missing repository secret CLOUDFLARE_ACCOUNT_ID"; exit 1)
           test -n "$CLOUDFLARE_API_TOKEN" || (echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN"; exit 1)
 
-      - name: Generate reference-conditioned child-pact pilot
-        if: github.event_name == 'push' || inputs.scene == 'beat-05-child-pact'
+      - name: Generate the complete nine-scene episode artwork
+        if: github.event_name == 'push' || inputs.scope == 'full-episode'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python destination-prototype/generate_fairytale_scenes.py \
+            --plan research/rumpelstiltskin-pilot.json \
+            --reference-image output/character-reference/rumpelstiltskin.png \
+            --scale-reference-image output/character-reference/height-scale.png \
+            --output output/rumpelstiltskin-generated-scenes
+
+      - name: Generate only the child-pact pilot
+        if: github.event_name == 'workflow_dispatch' && inputs.scope == 'pilot'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -130,27 +111,47 @@ jobs:
             --reference-image output/character-reference/rumpelstiltskin.png \
             --scale-reference-image output/character-reference/height-scale.png \
             --only-scene beat-05-child-pact \
-            --output output/rumpelstiltskin-reference-pilot
+            --output output/rumpelstiltskin-generated-scenes
 
-      - name: Generate all five character scenes
-        if: github.event_name == 'workflow_dispatch' && inputs.scene == 'all-character-scenes'
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Install renderer system dependencies
+        if: github.event_name == 'push' || inputs.scope == 'full-episode'
         run: |
-          python destination-prototype/generate_fairytale_scenes.py \
-            --plan research/rumpelstiltskin-pilot.json \
-            --reference-image output/character-reference/rumpelstiltskin.png \
-            --scale-reference-image output/character-reference/height-scale.png \
-            --output output/rumpelstiltskin-reference-pilot
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg fonts-dejavu-core espeak-ng
 
-      - name: Upload unapproved reference-conditioned artwork
+      - name: Install CPU video and Kokoro narration dependencies
+        if: github.event_name == 'push' || inputs.scope == 'full-episode'
+        run: |
+          python -m pip install -r requirements-render.txt
+          python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements-voice.txt
+          python -m pip check
+
+      - name: Build private review MP4 from all nine generated images
+        if: github.event_name == 'push' || inputs.scope == 'full-episode'
+        run: |
+          python -m unittest discover -s tests -p "test_render_fairytale_video.py" -v
+          python destination-prototype/render_fairytale_video.py \
+            --plan research/rumpelstiltskin-pilot.json \
+            --images output/rumpelstiltskin-generated-scenes \
+            --out output/rumpelstiltskin-video-review \
+            --voice bm_george \
+            --speed 1.0
+
+      - name: Upload images, contact sheet, and review-only MP4
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rumpelstiltskin-reference-pilot-${{ github.run_id }}
+          name: rumpelstiltskin-full-video-review-${{ github.run_id }}
           path: |
-            output/character-reference/
-            output/rumpelstiltskin-reference-pilot/
+            output/rumpelstiltskin-generated-scenes/*.jpg
+            output/rumpelstiltskin-generated-scenes/*.png
+            output/rumpelstiltskin-generated-scenes/generation-manifest.json
+            output/rumpelstiltskin-video-review/video.mp4
+            output/rumpelstiltskin-video-review/contact-sheet.jpg
+            output/rumpelstiltskin-video-review/captions.srt
+            output/rumpelstiltskin-video-review/render-metadata.json
+            output/rumpelstiltskin-video-review/PREVIEW-ONLY.txt
+            output/rumpelstiltskin-video-review/description.txt
           if-no-files-found: warn
           retention-days: 14
