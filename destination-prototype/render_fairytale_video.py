@@ -254,6 +254,15 @@ def _probe(path: Path) -> dict:
     return {"duration_seconds": duration, "video_stream": video, "audio_stream": audio}
 
 
+def _audio_mix_filter() -> str:
+    """Mix narration (input 1) with ambience (input 2); input 0 is silent video."""
+    return (
+        "[1:a]volume=1.0[narr];[2:a]volume=0.22[bed];"
+        "[narr][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+        "alimiter=limit=0.95[mixed]"
+    )
+
+
 def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, speed: float):
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise RuntimeError("FFmpeg and ffprobe are required")
@@ -336,11 +345,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     ass_path = work / "captions.ass"
     ass_path.write_text(build_ass(narration_events, (WIDTH, HEIGHT), karaoke=True), encoding="utf-8")
     audio_video = output_dir / "video.mp4"
-    mix_filter = (
-        "[0:a]volume=1.0[narr];[1:a]volume=0.22[bed];"
-        "[narr][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
-        "alimiter=limit=0.95[mixed]"
-    )
+    mix_filter = _audio_mix_filter()
     result = subprocess.run(
         [
             "ffmpeg", "-y", "-v", "error",
