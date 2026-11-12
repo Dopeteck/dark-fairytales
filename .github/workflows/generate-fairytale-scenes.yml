@@ -75,9 +75,9 @@ jobs:
                   print(name, image.size)
           PY
 
-      - name: Run full repository and fairytale input tests
+      - name: Run image-generation tests and compile both pipelines
         run: |
-          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests -p "test_generate_fairytale_scenes.py" -v
           python -m py_compile destination-prototype/generate_fairytale_scenes.py destination-prototype/render_fairytale_video.py
 
       - name: Check Cloudflare credentials
@@ -127,10 +127,13 @@ jobs:
           python -m pip install -r requirements-voice.txt
           python -m pip check
 
+      - name: Test fairytale renderer image validation and contact sheet
+        if: github.event_name == 'push' || inputs.scope == 'full-episode'
+        run: python -m unittest discover -s tests -p "test_render_fairytale_video.py" -v
+
       - name: Build private review MP4 from all nine generated images
         if: github.event_name == 'push' || inputs.scope == 'full-episode'
         run: |
-          python -m unittest discover -s tests -p "test_render_fairytale_video.py" -v
           python destination-prototype/render_fairytale_video.py \
             --plan research/rumpelstiltskin-pilot.json \
             --images output/rumpelstiltskin-generated-scenes \
