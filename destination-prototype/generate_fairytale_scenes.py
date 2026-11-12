@@ -26,10 +26,8 @@ OUTPUT_WIDTH = 832
 OUTPUT_HEIGHT = 1472
 
 STYLE_BIBLE = (
-    "Dark European fairy-tale storybook illustration, painterly cinematic realism, "
-    "late-medieval Central European setting, atmospheric candlelight, deep forest green, "
-    "old gold and charcoal shadows. Rich brush texture, expressive natural faces, "
-    "believable anatomy, dramatic but warm light. Not a photograph, not CGI, not a toy."
+    "Dark medieval European fairytale, painterly cinematic realism, dramatic candlelight, "
+    "deep forest green, old gold and charcoal shadows. Rich brush texture, believable anatomy."
 )
 
 # The image reference is the authority for Rumpelstiltskin's identity and costume.
