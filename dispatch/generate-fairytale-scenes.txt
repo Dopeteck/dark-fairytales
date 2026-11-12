@@ -1,1 +1,1 @@
-Regenerate with revised Rumpelstiltskin full-body framing: tiny 60 cm adult male dwarf versus 165 cm woman, cap at hip height, legs and shoes visible, red cap/white beard/red cloak/blue tunic/ochre breeches. Use FLUX steps=8. Review only; no approval, video render or publishing.\n
+Reference-conditioned pilot using FLUX.2 Klein 4B: use the previous small male Rumpelstiltskin reference image, preserve his exact identity and dwarf scale, and generate only beat-05-child-pact first. Review only; no approval, video rendering or publishing.\n
