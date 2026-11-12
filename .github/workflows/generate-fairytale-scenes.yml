@@ -45,9 +45,9 @@ jobs:
       - name: Download previously generated character reference source
         uses: actions/download-artifact@v4
         with:
-          name: rumpelstiltskin-reference-pilot-43241256340
+          name: rumpelstiltskin-reference-pilot-43242054796
           path: output/reference-source
-          run-id: 43241256340
+          run-id: 43242054796
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Prepare 512px Rumpelstiltskin character reference
@@ -64,8 +64,10 @@ jobs:
           with Image.open(source) as original:
               image = original.convert("RGB")
               # Isolate the full dwarf, including his cap, beard, costume and shoes.
-              crop = image.crop((430, 250, 832, 1440))
-              crop.thumbnail((218, 510), Image.Resampling.LANCZOS)
+              crop = image.crop((420, 580, 832, 1440))
+              # Reduce the isolated character within the square reference so
+              # the model learns that he is a small figure, not merely a close-up.
+              crop.thumbnail((144, 300), Image.Resampling.LANCZOS)
               canvas = Image.new("RGB", (510, 510), (95, 91, 84))
               canvas.paste(crop, ((510 - crop.width) // 2, (510 - crop.height) // 2))
               canvas.save(out, format="PNG")
