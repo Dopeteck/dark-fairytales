@@ -1,1 +1,1 @@
-Regenerate Rumpelstiltskin scenes with corrected classic male folkloric character identity: elderly tiny bearded man, fiery red nose, peaked red cap, red cloak, blue tunic, ochre breeches and curled shoes. Review only; do not approve, render or publish.\n
+Retry with mandatory full-body size contrast: Rumpelstiltskin is a tiny 60cm adult male dwarf beside a 165cm woman; his cap reaches her hip and both bowed legs and curled shoes must be visible. Use 8 FLUX steps. Review only; do not approve, render or publish.\n
