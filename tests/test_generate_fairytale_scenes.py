@@ -35,6 +35,41 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("No text", prompt)
         self.assertLessEqual(len(prompt), 2048)
 
+    def test_rumpelstiltskin_is_explicitly_locked_as_traditional_male_character(self):
+        prompt = generator.build_prompt(self.plan["scenes"][1], 8)
+        for required in (
+            "unmistakably adult MALE",
+            "long flowing white beard",
+            "fiery red nose",
+            "bright red peaked pointed cap",
+            "blue tunic",
+            "ochre-brown breeches",
+            "never female or androgynous",
+        ):
+            self.assertIn(required, prompt)
+        self.assertLessEqual(len(prompt), 2048)
+
+    def test_character_lock_is_only_added_to_scenes_where_he_appears(self):
+        queen_scene = {"id": "beat-07-three-days", "title": "Three days to name him"}
+        prompt = generator.build_prompt(queen_scene, 7)
+        self.assertNotIn("IDENTITY LOCK", prompt)
+        self.assertNotIn("Rumpelstiltskin is ALWAYS", prompt)
+
+    def test_every_character_appearance_uses_the_same_canonical_design(self):
+        expected = {
+            "beat-03-first-bargains",
+            "beat-05-child-pact",
+            "beat-06-claim",
+            "beat-08-forest-fire",
+            "beat-09-foot-revelation",
+        }
+        self.assertEqual(generator.RUMPELSTILTSKIN_SCENES, expected)
+        for index, scene_id in enumerate(sorted(expected), 1):
+            prompt = generator.build_prompt({"id": scene_id, "title": scene_id}, index)
+            self.assertIn("IDENTITY LOCK", prompt)
+            self.assertIn("white beard", prompt)
+            self.assertIn("red peaked", prompt)
+
     def test_unknown_scene_fails_closed(self):
         with self.assertRaises(ValueError):
             generator.build_prompt({"id": "unknown-beat"}, 1)
