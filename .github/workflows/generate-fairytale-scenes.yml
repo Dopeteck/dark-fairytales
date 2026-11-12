@@ -38,6 +38,10 @@ jobs:
           python-version: "3.11"
       - name: Install image generation dependencies
         run: python -m pip install "requests>=2.31" "Pillow>=10"
+      - name: Test prompts and FLUX request schema
+        run: |
+          python -m unittest discover -s tests -p "test_generate_fairytale_scenes.py" -v
+          python -m py_compile destination-prototype/generate_fairytale_scenes.py
       - name: Check Cloudflare credentials
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
