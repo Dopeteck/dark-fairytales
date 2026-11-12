@@ -25,6 +25,8 @@ RUMPELSTILTSKIN_MODEL_ID = "@cf/black-forest-labs/flux-2-klein-9b"
 API_ROOT = "https://api.cloudflare.com/client/v4/accounts"
 OUTPUT_WIDTH = 832
 OUTPUT_HEIGHT = 1472
+TRANSIENT_RETRIES = 3
+RETRY_BASE_SECONDS = 5.0
 
 STYLE_BIBLE = (
     "Dark medieval European fairytale, painterly cinematic realism, dramatic candlelight, "
@@ -171,7 +173,7 @@ def generate_one(
     guidance: float = 4.0,
     session: Any = requests,
 ) -> bytes:
-    """Generate with FLUX.2 Klein 4B using multipart inputs and optional character reference."""
+    """Generate with FLUX.2 Klein, retrying transient provider errors only."""
     url = f"{API_ROOT}/{account_id}/ai/run/{model_id}"
     fields = [
         ("prompt", (None, prompt)),
@@ -183,21 +185,78 @@ def generate_one(
         fields.append(("input_image_0", ("rumpelstiltskin-reference.png", reference_image, "image/png")))
     if scale_reference_image is not None:
         fields.append(("input_image_1", ("height-scale-guide.png", scale_reference_image, "image/png")))
-    response = session.post(
-        url,
-        headers={"Authorization": f"Bearer {api_token}"},
-        files=fields,
-        timeout=(20, 300),
-    )
-    if response.status_code == 429:
-        raise RuntimeError("Cloudflare Workers AI rate limit reached; retry later")
-    if response.status_code >= 400:
-        raise RuntimeError(f"Cloudflare Workers AI returned HTTP {response.status_code}: {response.text[:500]}")
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise RuntimeError("Cloudflare Workers AI returned non-JSON response") from exc
-    return _decode_image(payload)
+
+    for attempt in range(TRANSIENT_RETRIES + 1):
+        try:
+            response = session.post(
+                url,
+                headers={"Authorization": f"Bearer {api_token}"},
+                files=fields,
+                timeout=(20, 300),
+            )
+        except requests.RequestException as exc:
+            if attempt >= TRANSIENT_RETRIES:
+                raise RuntimeError(
+                    f"Cloudflare Workers AI request failed after {TRANSIENT_RETRIES + 1} attempts: "
+                    f"{type(exc).__name__}"
+                ) from exc
+            delay = RETRY_BASE_SECONDS * (2 ** attempt)
+            print(f"Temporary Cloudflare network error ({type(exc).__name__}); retrying in {delay:.0f}s")
+            time.sleep(delay)
+            continue
+
+        status = int(response.status_code)
+        if status == 429 or status in {500, 502, 503, 504}:
+            if attempt >= TRANSIENT_RETRIES:
+                raise RuntimeError(
+                    f"Cloudflare Workers AI transient HTTP {status} persisted after "
+                    f"{TRANSIENT_RETRIES + 1} attempts: {response.text[:500]}"
+                )
+            retry_after = None
+            try:
+                retry_after = float(response.headers.get("Retry-After", ""))
+            except (AttributeError, TypeError, ValueError):
+                pass
+            delay = max(1.0, min(retry_after, 60.0)) if retry_after is not None else RETRY_BASE_SECONDS * (2 ** attempt)
+            print(f"Cloudflare Workers AI returned transient HTTP {status}; retrying in {delay:.0f}s")
+            time.sleep(delay)
+            continue
+        if status >= 400:
+            raise RuntimeError(f"Cloudflare Workers AI returned HTTP {status}: {response.text[:500]}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError("Cloudflare Workers AI returned non-JSON response") from exc
+        return _decode_image(payload)
+
+    raise RuntimeError("Cloudflare Workers AI retry loop ended unexpectedly")
+
+
+def _existing_scene_image(output_dir: Path, index: int, scene_id: str) -> tuple[Path, bytes, int, int, str] | None:
+    """Find and validate a previously generated image for this exact scene."""
+    stem = f"{index:02d}-{re.sub(r'[^a-z0-9]+', '-', scene_id.lower()).strip('-')}"
+    for extension in (".jpg", ".png", ".webp", ".jpeg"):
+        path = output_dir / (stem + extension)
+        if not path.is_file():
+            continue
+        try:
+            data = path.read_bytes()
+            with Image.open(io.BytesIO(data)) as image:
+                image.verify()
+            with Image.open(io.BytesIO(data)) as image:
+                width, height = image.size
+                image_format = image.format
+            if width < 700 or height < 1200:
+                raise ValueError(f"partial image too small: {width}x{height}")
+            if abs((width / height) - (9 / 16)) > 0.035:
+                raise ValueError(f"partial image is not portrait 9:16: {width}x{height}")
+            if image_format not in {"JPEG", "PNG", "WEBP"}:
+                raise ValueError(f"unsupported partial image format: {image_format}")
+            return path, data, width, height, image_format
+        except Exception as exc:
+            print(f"Discarding invalid partial image {path.name}: {type(exc).__name__}: {exc}")
+            path.unlink(missing_ok=True)
+    return None
 
 
 def run(
@@ -209,6 +268,7 @@ def run(
     scale_reference_path: Path | None = None,
     only_scene: str | None = None,
     pause_seconds: float = 1.0,
+    resume: bool = False,
 ) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     scenes = plan.get("scenes", [])
@@ -269,31 +329,42 @@ def run(
         scene_reference = reference_bytes if is_character_scene else None
         scene_scale_reference = scale_reference_bytes if is_character_scene else None
         scene_model_id = RUMPELSTILTSKIN_MODEL_ID if is_character_scene else MODEL_ID
-        data = generate_one(
-            prompt,
-            account_id,
-            api_token,
-            reference_image=scene_reference,
-            scale_reference_image=scene_scale_reference,
-            model_id=scene_model_id,
-        )
 
-        with Image.open(io.BytesIO(data)) as image:
-            image.verify()
-        with Image.open(io.BytesIO(data)) as image:
-            width, height = image.size
-            image_format = image.format
-        extension = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}.get(image_format)
-        if extension is None:
-            raise RuntimeError(f"Unsupported generated image format: {image_format}")
-        filename = f"{index:02d}-{re.sub(r'[^a-z0-9]+', '-', scene_id.lower()).strip('-')}{extension}"
-        path = output_dir / filename
-        path.write_bytes(data)
+        resumed_image = _existing_scene_image(output_dir, index, scene_id) if resume else None
+        if resumed_image is not None:
+            path, data, width, height, image_format = resumed_image
+            resumed = True
+            print(f"Reusing verified partial image {index}/{len(scenes)}: {path.name} ({width}x{height})")
+        else:
+            data = generate_one(
+                prompt,
+                account_id,
+                api_token,
+                reference_image=scene_reference,
+                scale_reference_image=scene_scale_reference,
+                model_id=scene_model_id,
+            )
+            with Image.open(io.BytesIO(data)) as image:
+                image.verify()
+            with Image.open(io.BytesIO(data)) as image:
+                width, height = image.size
+                image_format = image.format
+            if width < 700 or height < 1200:
+                raise RuntimeError(f"Generated image too small for {scene_id}: {width}x{height}")
+            if abs((width / height) - (9 / 16)) > 0.035:
+                raise RuntimeError(f"Generated image is not portrait 9:16 for {scene_id}: {width}x{height}")
+            extension = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}.get(image_format)
+            if extension is None:
+                raise RuntimeError(f"Unsupported generated image format: {image_format}")
+            filename = f"{index:02d}-{re.sub(r'[^a-z0-9]+', '-', scene_id.lower()).strip('-')}{extension}"
+            path = output_dir / filename
+            path.write_bytes(data)
+            resumed = False
 
         manifest["images"].append({
             "scene_id": scene_id,
             "title": scene.get("title", scene_id),
-            "file": filename,
+            "file": path.name,
             "width": width,
             "height": height,
             "format": image_format,
@@ -303,10 +374,12 @@ def run(
             "model": scene_model_id,
             "uses_character_reference": scene_reference is not None,
             "uses_scale_reference": scene_scale_reference is not None,
+            "resumed_from_partial_run": resumed,
             "approved": False,
         })
-        print(f"Generated {index}/{len(scenes)}: {filename} ({width}x{height})")
-        if index < len(scenes) and pause_seconds > 0:
+        action = "Reused" if resumed else "Generated"
+        print(f"{action} {index}/{len(scenes)}: {path.name} ({width}x{height})")
+        if index < len(scenes) and pause_seconds > 0 and not resumed:
             time.sleep(pause_seconds)
 
     manifest["scene_count"] = len(manifest["images"])
@@ -323,6 +396,7 @@ def main() -> int:
     parser.add_argument("--scale-reference-image", type=Path, default=None)
     parser.add_argument("--only-scene", type=str, default=None)
     parser.add_argument("--pause-seconds", type=float, default=1.0)
+    parser.add_argument("--resume", action="store_true", help="reuse verified scene images already in the output directory")
     args = parser.parse_args()
 
     account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
@@ -339,6 +413,7 @@ def main() -> int:
         scale_reference_path=args.scale_reference_image,
         only_scene=args.only_scene,
         pause_seconds=args.pause_seconds,
+        resume=args.resume,
     )
     print(f"Generated {manifest['scene_count']} unapproved scene images with {MODEL_ID}")
     print(f"Review directory: {args.output}")
