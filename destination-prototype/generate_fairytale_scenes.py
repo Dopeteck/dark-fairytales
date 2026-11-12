@@ -41,7 +41,7 @@ RUMPELSTILTSKIN_CHARACTER_LOCK = (
     "adult male folkloric dwarf, only about 40 percent of an adult woman's height. "
     "He is NOT a normal-sized man. Beside an adult woman 165 cm tall, the top of his cap "
     "reaches no higher than her KNEECAP, never her waist or chest. "
-    "Input image 1 is ONLY a height guide: its tiny figure is 40 percent of the woman's height; copy that ratio exactly. "
+    "Input image 1 shows ONLY the height scale: dwarf = 40% of adult woman. "
     "Show both complete bodies from head to shoes on the same floor, with his short bowed "
     "legs visible. He is never "
     "a woman, girl, child, tall man or anonymous hooded figure. Never hide his legs."
