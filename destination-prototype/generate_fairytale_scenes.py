@@ -328,7 +328,9 @@ def run(
         is_character_scene = scene_id in RUMPELSTILTSKIN_SCENES
         scene_reference = reference_bytes if is_character_scene else None
         scene_scale_reference = scale_reference_bytes if is_character_scene else None
-        scene_model_id = RUMPELSTILTSKIN_MODEL_ID if is_character_scene else MODEL_ID
+        preferred_model_id = RUMPELSTILTSKIN_MODEL_ID if is_character_scene else MODEL_ID
+        scene_model_id = preferred_model_id
+        model_fallback_used = False
 
         resumed_image = _existing_scene_image(output_dir, index, scene_id) if resume else None
         if resumed_image is not None:
@@ -336,14 +338,35 @@ def run(
             resumed = True
             print(f"Reusing verified partial image {index}/{len(scenes)}: {path.name} ({width}x{height})")
         else:
-            data = generate_one(
-                prompt,
-                account_id,
-                api_token,
-                reference_image=scene_reference,
-                scale_reference_image=scene_scale_reference,
-                model_id=scene_model_id,
-            )
+            try:
+                data = generate_one(
+                    prompt,
+                    account_id,
+                    api_token,
+                    reference_image=scene_reference,
+                    scale_reference_image=scene_scale_reference,
+                    model_id=scene_model_id,
+                )
+            except RuntimeError as exc:
+                transient_failure = "transient HTTP" in str(exc) or "request failed after" in str(exc)
+                if not (is_character_scene and scene_model_id == RUMPELSTILTSKIN_MODEL_ID and transient_failure):
+                    raise
+                # Keep the 9B model as the preferred character generator, but do
+                # not let a temporary 9B outage block the whole short.
+                print(
+                    f"{scene_id}: Klein 9B remained unavailable after retries; "
+                    "falling back to Klein 4B with both character references."
+                )
+                scene_model_id = MODEL_ID
+                model_fallback_used = True
+                data = generate_one(
+                    prompt,
+                    account_id,
+                    api_token,
+                    reference_image=scene_reference,
+                    scale_reference_image=scene_scale_reference,
+                    model_id=scene_model_id,
+                )
             with Image.open(io.BytesIO(data)) as image:
                 image.verify()
             with Image.open(io.BytesIO(data)) as image:
@@ -372,6 +395,8 @@ def run(
             "sha256": hashlib.sha256(data).hexdigest(),
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "model": scene_model_id,
+            "preferred_model": preferred_model_id,
+            "model_fallback_used": model_fallback_used,
             "uses_character_reference": scene_reference is not None,
             "uses_scale_reference": scene_scale_reference is not None,
             "resumed_from_partial_run": resumed,
