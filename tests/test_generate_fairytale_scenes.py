@@ -108,6 +108,7 @@ class GeneratorTests(unittest.TestCase):
             "a fairytale scene", "account", "token",
             reference_image=identity,
             scale_reference_image=scale,
+            model_id=generator.RUMPELSTILTSKIN_MODEL_ID,
             width=832, height=1472, session=session
         )
         self.assertTrue(data.startswith(b"\xff\xd8"))
@@ -166,9 +167,9 @@ class GeneratorTests(unittest.TestCase):
         session = Mock()
         session.post.return_value = response
         original = generator.generate_one
-        generator.generate_one = lambda prompt, account_id, api_token, reference_image=None, scale_reference_image=None, width=832, height=1472, guidance=4.0: original(
+        generator.generate_one = lambda prompt, account_id, api_token, reference_image=None, scale_reference_image=None, model_id=generator.MODEL_ID, width=832, height=1472, guidance=4.0: original(
             prompt, account_id, api_token, reference_image, scale_reference_image,
-            width, height, guidance, session=session
+            model_id, width, height, guidance, session=session
         )
         try:
             with tempfile.TemporaryDirectory() as temp:
@@ -186,12 +187,14 @@ class GeneratorTests(unittest.TestCase):
                     pause_seconds=0,
                 )
                 self.assertEqual(manifest["scene_count"], 1)
-                self.assertEqual(manifest["model"], "@cf/black-forest-labs/flux-2-klein-9b")
+                self.assertEqual(manifest["model_strategy"]["character_scenes"], "@cf/black-forest-labs/flux-2-klein-9b")
+                self.assertEqual(manifest["model_strategy"]["other_scenes"], "@cf/black-forest-labs/flux-2-klein-4b")
                 self.assertFalse(manifest["approved"])
                 self.assertFalse(manifest["rendered"])
                 self.assertTrue((out / "01-beat-05-child-pact.jpg").is_file())
                 saved = json.loads((out / "generation-manifest.json").read_text())
                 self.assertEqual(saved["scene_count"], 1)
+                self.assertEqual(saved["images"][0]["model"], "@cf/black-forest-labs/flux-2-klein-9b")
                 self.assertTrue(saved["images"][0]["uses_character_reference"])
                 self.assertTrue(saved["images"][0]["uses_scale_reference"])
                 self.assertFalse(saved["images"][0]["approved"])
