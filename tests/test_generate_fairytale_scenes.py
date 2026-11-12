@@ -20,6 +20,8 @@ class GeneratorTests(unittest.TestCase):
             "scenes": [
                 {"id": "beat-01-threat", "title": "A threat before the magic",
                  "narration": "Spin straw into gold by morning."},
+                {"id": "beat-05-child-pact", "title": "The child pact",
+                 "narration": "She bargains away her first child."},
                 {"id": "beat-08-forest-fire", "title": "A dance in the forest",
                  "narration": "A messenger finds him dancing by a fire."},
             ],
@@ -35,16 +37,22 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("No text", prompt)
         self.assertLessEqual(len(prompt), 2048)
 
-    def test_rumpelstiltskin_is_explicitly_locked_as_traditional_male_character(self):
-        prompt = generator.build_prompt(self.plan["scenes"][1], 8)
+    def test_rumpelstiltskin_prompt_makes_his_small_scale_mandatory(self):
+        prompt = generator.build_prompt(self.plan["scenes"][1], 5)
         for required in (
-            "unmistakably adult MALE",
-            "long flowing white beard",
-            "fiery red nose",
-            "bright red peaked pointed cap",
-            "blue tunic",
-            "ochre-brown breeches",
-            "never female or androgynous",
+            "ADULT MALE dwarf",
+            "60 cm",
+            "reaches ONLY her hip",
+            "2.5 times taller",
+            "full-body",
+            "short bowed bandy legs",
+            "long white beard",
+            "bulbous fiery-red nose",
+            "tall red pointed cap",
+            "deep-blue tunic",
+            "ochre breeches",
+            "NOT a woman",
+            "NOT a child",
         ):
             self.assertIn(required, prompt)
         self.assertLessEqual(len(prompt), 2048)
@@ -52,10 +60,10 @@ class GeneratorTests(unittest.TestCase):
     def test_character_lock_is_only_added_to_scenes_where_he_appears(self):
         queen_scene = {"id": "beat-07-three-days", "title": "Three days to name him"}
         prompt = generator.build_prompt(queen_scene, 7)
-        self.assertNotIn("IDENTITY LOCK", prompt)
-        self.assertNotIn("Rumpelstiltskin is ALWAYS", prompt)
+        self.assertNotIn("RUMPELSTILTSKIN MUST BE TINY", prompt)
+        self.assertNotIn("2.5 times taller", prompt)
 
-    def test_every_character_appearance_uses_the_same_canonical_design(self):
+    def test_every_character_appearance_uses_the_same_scale_and_costume_lock(self):
         expected = {
             "beat-03-first-bargains",
             "beat-05-child-pact",
@@ -66,9 +74,11 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(generator.RUMPELSTILTSKIN_SCENES, expected)
         for index, scene_id in enumerate(sorted(expected), 1):
             prompt = generator.build_prompt({"id": scene_id, "title": scene_id}, index)
-            self.assertIn("IDENTITY LOCK", prompt)
+            self.assertIn("RUMPELSTILTSKIN MUST BE TINY", prompt)
+            self.assertIn("60 cm", prompt)
             self.assertIn("white beard", prompt)
-            self.assertIn("red peaked", prompt)
+            self.assertIn("red pointed cap", prompt)
+            self.assertLessEqual(len(prompt), 2048)
 
     def test_unknown_scene_fails_closed(self):
         with self.assertRaises(ValueError):
@@ -79,12 +89,12 @@ class GeneratorTests(unittest.TestCase):
         response.json.return_value = {"result": {"image": self.image_b64}}
         session = Mock()
         session.post.return_value = response
-        data = generator.generate_one("a fairytale scene", "account", "token", steps=4, session=session)
+        data = generator.generate_one("a fairytale scene", "account", "token", steps=8, session=session)
         self.assertTrue(data.startswith(b"\xff\xd8"))
         session.post.assert_called_once()
         args, kwargs = session.post.call_args
         self.assertIn("/ai/run/@cf/black-forest-labs/flux-1-schnell", args[0])
-        self.assertEqual(kwargs["json"], {"prompt": "a fairytale scene", "steps": 4})
+        self.assertEqual(kwargs["json"], {"prompt": "a fairytale scene", "steps": 8})
         self.assertNotIn("seed", kwargs["json"])
 
     def test_http_errors_are_clear(self):
@@ -100,7 +110,7 @@ class GeneratorTests(unittest.TestCase):
         session = Mock()
         session.post.return_value = response
         original = generator.generate_one
-        generator.generate_one = lambda prompt, account_id, api_token, steps=4: original(
+        generator.generate_one = lambda prompt, account_id, api_token, steps=8: original(
             prompt, account_id, api_token, steps, session=session
         )
         try:
@@ -110,13 +120,15 @@ class GeneratorTests(unittest.TestCase):
                 plan_path.write_text(json.dumps(self.plan), encoding="utf-8")
                 out = root / "images"
                 manifest = generator.run(plan_path, out, "account", "token", pause_seconds=0)
-                self.assertEqual(manifest["scene_count"], 2)
+                self.assertEqual(manifest["scene_count"], 3)
+                self.assertEqual(manifest["steps"], 8)
                 self.assertFalse(manifest["approved"])
                 self.assertFalse(manifest["rendered"])
                 self.assertTrue((out / "01-beat-01-threat.jpg").is_file())
-                self.assertTrue((out / "02-beat-08-forest-fire.jpg").is_file())
+                self.assertTrue((out / "02-beat-05-child-pact.jpg").is_file())
+                self.assertTrue((out / "03-beat-08-forest-fire.jpg").is_file())
                 saved = json.loads((out / "generation-manifest.json").read_text())
-                self.assertEqual(saved["scene_count"], 2)
+                self.assertEqual(saved["scene_count"], 3)
                 self.assertTrue(all(not item["approved"] for item in saved["images"]))
         finally:
             generator.generate_one = original
