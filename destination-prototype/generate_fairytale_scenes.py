@@ -35,21 +35,15 @@ STYLE_BIBLE = (
 # prompt containing Rumpelstiltskin. The prior output followed his clothes but
 # ignored scale because the prompt did not insist on a full-body comparison.
 RUMPELSTILTSKIN_CHARACTER_LOCK = (
-    "PRIMARY SUBJECT — RUMPELSTILTSKIN: an unmistakably ADULT ELDERLY MALE dwarf "
-    "from traditional Grimm fairy-tale folklore, extremely short, only about 60 cm "
-    "tall. When standing beside the young adult woman (about 165 cm tall), the top "
-    "of his red cap reaches ONLY her hip; he is much less than half her height. "
-    "This height difference is essential and must be obvious. He has an old rugged "
-    "masculine face, prominent fiery-red bulbous nose, thick brows, long flowing "
-    "white beard and moustache, short bowed bandy legs and curled pointed shoes. "
-    "His fixed traditional costume: bright red tall pointed cap, short red cloak, "
-    "deep blue tunic, ochre-brown breeches, curled leather shoes. He is an adult "
-    "male folkloric dwarf, NOT a woman, NOT a child, NOT a normal-sized old man, "
-    "NOT a tall human and NOT an anonymous hooded figure. Show his entire body "
-    "from cap to shoes, with both short crooked legs visible. Show the woman's "
-    "entire body beside him to prove the scale. Wide full-length composition, "
-    "both characters standing on the same floor, generous space around their feet. "
-    "Never hide his legs behind furniture and never crop either character at the waist."
+    "RUMPELSTILTSKIN: tiny elderly ADULT MALE dwarf, about 60 cm (2 feet) tall. "
+    "Beside an adult woman 165 cm tall, his cap reaches ONLY her hip; she is "
+    "at least 2.5 times taller. This size contrast is mandatory. Wide full-body "
+    "shot, both standing on the same floor; show him from red cap to curled shoes. "
+    "His tiny bowed bandy legs and pointed shoes must be visible. Rugged masculine "
+    "old face, bulbous fiery-red nose, thick brows, long white beard and moustache. "
+    "Traditional costume: tall red pointed cap, short red cloak, deep-blue tunic, "
+    "ochre breeches. Adult man, never a woman, child, normal-height/tall man or "
+    "hooded figure. Do not crop him or hide his legs."
 )
 
 NEGATIVE_GUIDANCE = (
