@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "destination-prototype"))
-from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient
+from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter
 
 
 class FairytaleVideoInputTests(unittest.TestCase):
@@ -46,6 +46,12 @@ class FairytaleVideoInputTests(unittest.TestCase):
         (folder / "generation-manifest.json").write_text(
             json.dumps(manifest), encoding="utf-8"
         )
+
+    def test_ffmpeg_mix_reads_narration_and_ambient_from_correct_inputs(self):
+        mix = _audio_mix_filter()
+        self.assertIn("[1:a]volume=1.0[narr]", mix)
+        self.assertIn("[2:a]volume=0.22[bed]", mix)
+        self.assertNotIn("[0:a]", mix)
 
     def test_ambient_audio_fade_uses_integer_slice_bounds(self):
         with tempfile.TemporaryDirectory() as tmp:
