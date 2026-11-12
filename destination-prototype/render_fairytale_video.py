@@ -7,6 +7,7 @@ nine generated images and records preview_only=true in the output metadata.
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -42,6 +43,7 @@ INTER_SCENE_GAP = 0.16
 TARGET_MIN, TARGET_MAX = 45.0, 60.0
 
 
+@lru_cache(maxsize=32)
 def _font(size: int, bold: bool = True):
     candidates = (
         ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
