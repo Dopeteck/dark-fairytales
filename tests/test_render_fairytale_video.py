@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "destination-prototype"))
-from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter
+from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _chapter_frame
 
 
 class FairytaleVideoInputTests(unittest.TestCase):
@@ -46,6 +46,31 @@ class FairytaleVideoInputTests(unittest.TestCase):
         (folder / "generation-manifest.json").write_text(
             json.dumps(manifest), encoding="utf-8"
         )
+
+    def test_chapter_overlay_is_visible_and_preserves_vertical_frame_size(self):
+        source = Image.new("RGB", (1080, 1920), (35, 42, 50))
+        labelled = _chapter_frame(source, "NIGHT ONE — THE NECKLACE", 3)
+        self.assertEqual(labelled.size, (1080, 1920))
+        self.assertNotEqual(labelled.getpixel((80, 120)), source.getpixel((80, 120)))
+        self.assertEqual(labelled.getpixel((540, 1000)), source.getpixel((540, 1000)))
+
+    def test_story_plan_runs_in_chronological_order_with_a_clear_name_reveal(self):
+        plan = json.loads((ROOT / "research" / "rumpelstiltskin-pilot.json").read_text(encoding="utf-8"))
+        ids = [scene["id"] for scene in plan["scenes"]]
+        self.assertEqual(ids, [
+            "beat-02-boast",
+            "beat-01-threat",
+            "beat-03-first-bargains",
+            "beat-04-king-demands",
+            "beat-05-child-pact",
+            "beat-06-claim",
+            "beat-07-three-days",
+            "beat-08-forest-fire",
+            "beat-09-foot-revelation",
+        ])
+        self.assertIn("Rumpelstiltskin!", plan["scenes"][-1]["narration"])
+        self.assertEqual(plan["narration"], " ".join(scene["narration"] for scene in plan["scenes"]))
+        self.assertTrue(120 <= len(plan["narration"].split()) <= 140)
 
     def test_ffmpeg_mix_reads_narration_and_ambient_from_correct_inputs(self):
         mix = _audio_mix_filter()
