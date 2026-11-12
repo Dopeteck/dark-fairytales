@@ -93,6 +93,17 @@ class GeneratorTests(unittest.TestCase):
             self.assertIn("60-centimetre", prompt)
             self.assertLessEqual(len(prompt), 2048)
 
+
+    def test_all_nine_episode_prompts_fit_the_model_input_limit(self):
+        plan = json.loads((Path(__file__).resolve().parents[1] / "research" / "rumpelstiltskin-pilot.json").read_text(encoding="utf-8"))
+        for index, scene in enumerate(plan["scenes"], 1):
+            prompt = generator.build_prompt(scene, index)
+            self.assertLessEqual(len(prompt), 2048, scene["id"])
+            if scene["id"] in generator.RUMPELSTILTSKIN_SCENES:
+                self.assertIn("input image 0 is Rumpelstiltskin", prompt)
+                self.assertIn("input image 1", prompt.lower())
+                self.assertIn("KNEECAP", prompt)
+
     def test_unknown_scene_fails_closed(self):
         with self.assertRaises(ValueError):
             generator.build_prompt({"id": "unknown-beat"}, 1)
