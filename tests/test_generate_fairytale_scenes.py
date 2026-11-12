@@ -49,7 +49,7 @@ class GeneratorTests(unittest.TestCase):
             "SAME character",
             "ADULT male",
             "60-centimetre",
-            "reaches only her hip",
+            "reaches no higher than her KNEECAP",
             "adult woman",
             "white beard",
             "fiery-red nose",
