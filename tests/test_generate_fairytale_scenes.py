@@ -144,7 +144,7 @@ class GeneratorTests(unittest.TestCase):
         session.post.side_effect = [first, second]
         with patch.object(generator.time, "sleep") as sleep:
             data = generator.generate_one("fairytale scene", "account", "token", session=session)
-        self.assertTrue(data.startswith(b"\\xff\\xd8"))
+        self.assertTrue(data.startswith(b"\xff\xd8"))
         self.assertEqual(session.post.call_count, 2)
         sleep.assert_called_once()
 
@@ -193,8 +193,11 @@ class GeneratorTests(unittest.TestCase):
         response = Mock(status_code=429, text="rate limited")
         session = Mock()
         session.post.return_value = response
-        with self.assertRaisesRegex(RuntimeError, "rate limit"):
-            generator.generate_one("prompt", "account", "token", session=session)
+        with patch.object(generator.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "rate limit"):
+                generator.generate_one("prompt", "account", "token", session=session)
+        self.assertEqual(session.post.call_count, generator.TRANSIENT_RETRIES + 1)
+        self.assertEqual(sleep.call_count, generator.TRANSIENT_RETRIES)
 
     def test_rumpel_scene_requires_two_valid_small_visual_references(self):
         with tempfile.TemporaryDirectory() as temp:
