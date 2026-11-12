@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate review-only fairytale scene images with Cloudflare Workers AI.
 
+Rumpelstiltskin scenes use a visual character reference to maintain identity.
 This tool never approves assets and never renders or publishes a video.
 """
 from __future__ import annotations
@@ -8,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -18,92 +20,94 @@ from typing import Any
 import requests
 from PIL import Image
 
-MODEL_ID = "@cf/black-forest-labs/flux-1-schnell"
+MODEL_ID = "@cf/black-forest-labs/flux-2-klein-4b"
 API_ROOT = "https://api.cloudflare.com/client/v4/accounts"
+OUTPUT_WIDTH = 832
+OUTPUT_HEIGHT = 1472
 
 STYLE_BIBLE = (
-    "Cinematic dark European fairytale, late-medieval Central European setting, "
-    "gothic storybook realism, richly textured painterly realism, dramatic candlelight, "
-    "deep forest green, tarnished gold, charcoal shadows and atmospheric mist. "
-    "The miller's daughter is the same young adult woman in every scene: pale skin, "
-    "long dark auburn braided hair, simple ivory linen dress. The king is the same "
-    "stern middle-aged man with a black beard and dark crimson-and-gold royal clothing. "
-    "Keep character faces, costume and period details consistent."
+    "Dark European fairy-tale storybook illustration, painterly cinematic realism, "
+    "late-medieval Central European setting, atmospheric candlelight, deep forest green, "
+    "old gold and charcoal shadows. Rich brush texture, expressive natural faces, "
+    "believable anatomy, dramatic but warm light. Not a photograph, not CGI, not a toy."
 )
 
-# These physical and framing constraints are deliberately placed FIRST in every
-# prompt containing Rumpelstiltskin. The prior output followed his clothes but
-# ignored scale because the prompt did not insist on a full-body comparison.
+# The image reference is the authority for Rumpelstiltskin's identity and costume.
+# Keep the height/framing directions explicit so that a reference does not become
+# an ordinary full-sized old man.
 RUMPELSTILTSKIN_CHARACTER_LOCK = (
-    "RUMPELSTILTSKIN: tiny elderly ADULT MALE dwarf, about 60 cm (2 feet) tall. "
-    "Beside an adult woman 165 cm tall, his cap reaches ONLY her hip; she is "
-    "at least 2.5 times taller. This size contrast is mandatory. Wide full-body "
-    "shot, both standing on the same floor; show him from red cap to curled shoes. "
-    "His tiny bowed bandy legs and pointed shoes must be visible. Rugged masculine "
-    "old face, bulbous fiery-red nose, thick brows, long white beard and moustache. "
-    "Traditional costume: tall red pointed cap, short red cloak, deep-blue tunic, "
-    "ochre breeches. Adult man, never a woman, child, normal-height/tall man or "
-    "hooded figure. Do not crop him or hide his legs."
+    "CHARACTER REFERENCE: input image 0 is Rumpelstiltskin. Recreate the SAME character "
+    "from that reference: same elderly male face, large fiery-red nose, long white beard "
+    "and moustache, pointed red cap, red cloak, blue tunic, ochre breeches and curled "
+    "shoes. Do not copy the reference background or pose. He is a tiny 60-centimetre "
+    "adult male folkloric dwarf, not a normal-sized man. Beside an adult woman 165 cm "
+    "tall, his cap reaches only her hip. Make this size difference unmistakable. Show "
+    "his complete body from hat to shoes, including both short bowed legs. He is never "
+    "a woman, girl, child, tall man or anonymous hooded figure. Never hide his legs."
 )
 
 NEGATIVE_GUIDANCE = (
-    "No text, captions, watermark, collage, comic panels, modern items, anime, "
-    "cartoon, 3D render, duplicate limbs, malformed hands, gore or graphic violence."
+    "No lettering, captions, watermark, collage, comic panels, modern objects, anime, "
+    "plastic 3D toy appearance, malformed anatomy, duplicate people or duplicate "
+    "Rumpelstiltskin, extra limbs, gore or graphic violence."
 )
 
 SCENE_VISUALS = {
     "beat-01-threat": (
-        "The miller's daughter alone in a vast stone chamber piled high with golden straw; "
-        "an old spinning wheel beside her and the king's threatening silhouette in the doorway. "
-        "A wide establishing view of the full chamber."
+        "The miller's daughter, an adult woman in her early twenties, alone in a vast "
+        "stone chamber piled high with golden straw; a spinning wheel beside her and "
+        "the king's threatening silhouette in the doorway. Wide establishing view."
     ),
     "beat-02-boast": (
-        "A nervous miller presents his daughter before a stern king in a candlelit medieval "
-        "throne room. The daughter looks shocked by her father's boast; straw bales behind them."
+        "A nervous miller presents his adult daughter, a woman in her early twenties, "
+        "before a stern king in a candlelit medieval throne room. The daughter looks "
+        "shocked by her father's boast; straw bales behind them."
     ),
     "beat-03-first-bargains": (
-        "A wide full-length view of the tiny Rumpelstiltskin standing beside the much taller "
-        "miller's daughter at an antique spinning wheel. He spins straw into shimmering gold. "
-        "Keep the wheel to the side so it does not hide his short bowed legs or curled shoes. "
-        "The woman's necklace is visible as the price of the bargain."
+        "Wide full-length view of the tiny Rumpelstiltskin beside the much taller "
+        "adult miller's daughter at an antique spinning wheel. He spins straw into gold. "
+        "Keep the wheel clear of his short bowed legs and curled shoes. Her necklace "
+        "is visible as the bargain's price."
     ),
     "beat-04-king-demands": (
-        "The stern king leads the miller's daughter into an even larger stone chamber filled "
-        "with straw; golden light spills from the doorway and a spinning wheel waits in front."
+        "The stern king leads the adult miller's daughter into a larger stone chamber "
+        "filled with straw; golden light spills from the doorway and a spinning wheel waits."
     ),
     "beat-05-child-pact": (
-        "WIDE FULL-BODY TWO-SHOT, both figures standing on the same bare stone floor, head to toe "
-        "and feet fully visible. On the right is Rumpelstiltskin, a genuinely tiny 60-centimetre "
-        "adult male dwarf whose pointed cap reaches only the young woman's hip. On the left is "
-        "the much taller young miller's daughter, about 165 centimetres tall. Their height "
-        "difference must be unmistakable: he is less than half her height, not a tall man. "
-        "His short bowed legs and curled shoes are clearly visible. They face each other beside "
-        "a spinning wheel in a shadowy straw-filled chamber. She has nothing left to give; "
-        "tense solemn bargain. Do not crop either person and do not hide his legs."
+        "WIDE FULL-BODY TWO-SHOT. A clearly adult woman in her early twenties, with "
+        "adult facial features and adult body proportions, stands on the left. Rumpelstiltskin "
+        "stands on the right, visibly tiny and only 60 centimetres tall; his red cap reaches "
+        "only the adult woman's hip. The woman is at least 2.5 times taller than him. "
+        "Both stand on the same bare stone floor and are visible head to shoes. His short "
+        "bowed legs and curled shoes are clearly visible. He faces her beside a spinning "
+        "wheel in a shadowy straw-filled chamber. She has nothing left to give; tense solemn "
+        "bargain. There is NO child in this scene."
     ),
     "beat-06-claim": (
-        "A wide full-length view in a medieval royal chamber. The young queen stands beside her "
-        "peacefully sleeping infant's cradle. Rumpelstiltskin stands on the same floor facing her: "
-        "a tiny 60-centimetre elderly male dwarf, his pointed red cap reaching only the queen's "
-        "hip. Show his entire tiny figure, short bowed legs and curled shoes, with the much taller "
-        "queen's full body visible for scale. He demands the promise; no threat to the baby."
+        "Wide full-length view in a medieval royal chamber. The adult queen, in her early "
+        "twenties, stands beside her peacefully sleeping infant's cradle. Rumpelstiltskin "
+        "faces her on the same floor: a tiny 60-centimetre male dwarf whose red cap reaches "
+        "only her hip. Show his full body, short bowed legs and curled shoes, with the "
+        "queen's much taller adult body visible for scale. No threat to the baby."
     ),
     "beat-07-three-days": (
-        "The anxious queen at a castle window speaking urgently with a mounted messenger who "
-        "prepares to ride into a moonlit forest; warm candlelight inside and cold blue night outside."
+        "The anxious adult queen at a castle window speaking urgently with a mounted "
+        "messenger preparing to ride into a moonlit forest; warm candlelight inside, "
+        "cold blue night outside."
     ),
     "beat-08-forest-fire": (
-        "A full-body wide shot of Rumpelstiltskin dancing alone beside a small forest fire and "
-        "crooked woodland hut. His entire tiny 60-centimetre adult male dwarf body is visible "
-        "head to toe; compare his height with the hut door and nearby tree roots. Show his short "
-        "bowed legs and curled shoes clearly as he dances on one leg. Moonlit trees and sparks."
+        "A single tiny male dwarf, Rumpelstiltskin, dances alone beside a small forest fire "
+        "and crooked woodland hut. Show exactly ONE person: no other people, no second dwarf, "
+        "no female goblin. His whole 60-centimetre body is visible head to shoes, with short "
+        "bowed legs and curled shoes; use the hut door for scale. Moonlit trees and drifting sparks."
     ),
     "beat-09-foot-revelation": (
-        "A full-body wide view of the tiny elderly male dwarf Rumpelstiltskin after the queen "
-        "speaks his name. His short bowed leg is stamped deep into the wooden floorboards as he "
-        "strains to pull it free with both hands. Show his entire tiny body, white beard, red "
-        "pointed cap and curled shoes; his other crooked leg and trapped foot must be visible. "
-        "The queen stands farther back for scale. No gore."
+        "One Rumpelstiltskin only. Wide full-body view of the tiny elderly male dwarf after "
+        "the queen speaks his name. His short bowed leg is stamped deep into wooden floorboards "
+        "as he strains to pull it free with both hands. Show his entire small body, white beard, "
+        "red pointed cap and curled shoes; both legs and the trapped foot must be visible. "
+        "The adult queen stands farther back for scale. No duplicate Rumpelstiltskin, no second "
+        "dwarf, no gore."
     ),
 }
 
@@ -123,8 +127,6 @@ def build_prompt(scene: dict[str, Any], index: int) -> str:
         raise ValueError(f"No approved visual direction exists for scene {scene_id!r}")
     title = str(scene.get("title", scene_id)).strip()
 
-    # Keep all high-priority subject and scale instructions intact. Add mood
-    # and scene facts after them; never truncate the character identity lock.
     parts = []
     if scene_id in RUMPELSTILTSKIN_SCENES:
         parts.extend([RUMPELSTILTSKIN_CHARACTER_LOCK, visual])
@@ -133,19 +135,9 @@ def build_prompt(scene: dict[str, Any], index: int) -> str:
     parts.extend([f"Scene {index}: {title}.", STYLE_BIBLE, NEGATIVE_GUIDANCE])
     prompt = " ".join(parts)
     if len(prompt) > 2048:
-        # Low-priority style adjectives are shortened, never the body/scale lock.
-        compact_style = (
-            "Dark medieval European fairytale, cinematic painterly realism, "
-            "dramatic candlelight, mist, deep greens, old gold and charcoal shadows."
-        )
-        parts = [part for part in parts if part != STYLE_BIBLE]
-        parts.append(compact_style)
-        prompt = " ".join(parts)
-    if len(prompt) > 2048:
-        # Fail explicitly instead of silently cutting off the character constraints.
         raise ValueError(
-            f"Prompt for {scene_id} exceeds FLUX's 2048-character limit "
-            "after removing optional style detail"
+            f"Prompt for {scene_id} is {len(prompt)} characters; refusing to truncate "
+            "character identity, scale or composition instructions"
         )
     return prompt
 
@@ -163,15 +155,31 @@ def _decode_image(payload: dict[str, Any]) -> bytes:
     return data
 
 
-def generate_one(prompt: str, account_id: str, api_token: str,
-                 steps: int = 8, session: Any = requests) -> bytes:
-    """Call FLUX.1 schnell using only its supported REST input fields."""
+def generate_one(
+    prompt: str,
+    account_id: str,
+    api_token: str,
+    reference_image: bytes | None = None,
+    width: int = OUTPUT_WIDTH,
+    height: int = OUTPUT_HEIGHT,
+    guidance: float = 4.0,
+    session: Any = requests,
+) -> bytes:
+    """Generate with FLUX.2 Klein 4B using multipart inputs and optional character reference."""
     url = f"{API_ROOT}/{account_id}/ai/run/{MODEL_ID}"
+    fields = [
+        ("prompt", (None, prompt)),
+        ("width", (None, str(width))),
+        ("height", (None, str(height))),
+        ("guidance", (None, str(guidance))),
+    ]
+    if reference_image is not None:
+        fields.append(("input_image_0", ("rumpelstiltskin-reference.png", reference_image, "image/png")))
     response = session.post(
         url,
-        headers={"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"},
-        json={"prompt": prompt, "steps": steps},
-        timeout=(20, 240),
+        headers={"Authorization": f"Bearer {api_token}"},
+        files=fields,
+        timeout=(20, 300),
     )
     if response.status_code == 429:
         raise RuntimeError("Cloudflare Workers AI rate limit reached; retry later")
@@ -184,37 +192,79 @@ def generate_one(prompt: str, account_id: str, api_token: str,
     return _decode_image(payload)
 
 
-def run(plan_path: Path, output_dir: Path, account_id: str, api_token: str,
-        steps: int = 8, pause_seconds: float = 1.0) -> dict[str, Any]:
+def run(
+    plan_path: Path,
+    output_dir: Path,
+    account_id: str,
+    api_token: str,
+    reference_image_path: Path | None = None,
+    only_scene: str | None = None,
+    pause_seconds: float = 1.0,
+) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     scenes = plan.get("scenes", [])
     if not scenes:
         raise ValueError("The story plan contains no scenes")
+    if only_scene:
+        scenes = [scene for scene in scenes if str(scene.get("id")) == only_scene]
+        if not scenes:
+            raise ValueError(f"Requested scene {only_scene!r} is not in the story plan")
+
+    uses_rumpel = any(str(scene.get("id")) in RUMPELSTILTSKIN_SCENES for scene in scenes)
+    reference_bytes = None
+    if uses_rumpel:
+        if reference_image_path is None or not reference_image_path.is_file():
+            raise ValueError("Rumpelstiltskin scenes require a visual reference image")
+        with Image.open(reference_image_path) as ref:
+            ref.verify()
+        with Image.open(reference_image_path) as ref:
+            if ref.width > 512 or ref.height > 512:
+                raise ValueError("FLUX.2 Klein reference images must be 512x512 pixels or smaller")
+            ref_format = ref.format
+        if ref_format not in {"PNG", "JPEG", "WEBP"}:
+            raise ValueError(f"Unsupported reference format: {ref_format}")
+        reference_bytes = reference_image_path.read_bytes()
+
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, Any] = {
         "story": plan.get("title", plan.get("series", "Untitled story")),
         "model": MODEL_ID,
-        "steps": steps,
+        "width": OUTPUT_WIDTH,
+        "height": OUTPUT_HEIGHT,
         "status": "generated_unapproved_review_only",
         "approved": False,
         "rendered": False,
         "published": False,
+        "reference_image_sha256": hashlib.sha256(reference_bytes).hexdigest() if reference_bytes else None,
         "images": [],
     }
+
     for index, scene in enumerate(scenes, 1):
+        scene_id = str(scene["id"])
         prompt = build_prompt(scene, index)
-        data = generate_one(prompt, account_id, api_token, steps=steps)
-        filename = f"{index:02d}-{re.sub(r'[^a-z0-9]+', '-', str(scene['id']).lower()).strip('-')}.jpg"
-        path = output_dir / filename
-        path.write_bytes(data)
-        with Image.open(path) as image:
+        scene_reference = reference_bytes if scene_id in RUMPELSTILTSKIN_SCENES else None
+        data = generate_one(
+            prompt,
+            account_id,
+            api_token,
+            reference_image=scene_reference,
+        )
+
+        with Image.open(io.BytesIO(data)) as image:
             image.verify()
-        with Image.open(path) as image:
+        with Image.open(io.BytesIO(data)) as image:
             width, height = image.size
             image_format = image.format
+        extension = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}.get(image_format)
+        if extension is None:
+            raise RuntimeError(f"Unsupported generated image format: {image_format}")
+        filename = f"{index:02d}-{re.sub(r'[^a-z0-9]+', '-', scene_id.lower()).strip('-')}{extension}"
+        path = output_dir / filename
+        path.write_bytes(data)
+
         manifest["images"].append({
-            "scene_id": scene["id"],
-            "title": scene.get("title", scene["id"]),
+            "scene_id": scene_id,
+            "title": scene.get("title", scene_id),
             "file": filename,
             "width": width,
             "height": height,
@@ -222,11 +272,13 @@ def run(plan_path: Path, output_dir: Path, account_id: str, api_token: str,
             "bytes": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "uses_character_reference": scene_reference is not None,
             "approved": False,
         })
         print(f"Generated {index}/{len(scenes)}: {filename} ({width}x{height})")
         if index < len(scenes) and pause_seconds > 0:
             time.sleep(pause_seconds)
+
     manifest["scene_count"] = len(manifest["images"])
     manifest_path = output_dir / "generation-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -237,17 +289,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path, default=Path("research/rumpelstiltskin-pilot.json"))
     parser.add_argument("--output", type=Path, default=Path("output/rumpelstiltskin-generated-scenes"))
-    parser.add_argument("--steps", type=int, choices=range(1, 9), default=8)
+    parser.add_argument("--reference-image", type=Path, default=None)
+    parser.add_argument("--only-scene", type=str, default=None)
     parser.add_argument("--pause-seconds", type=float, default=1.0)
     args = parser.parse_args()
+
     account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
     api_token = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
     if not account_id or not api_token:
-        raise SystemExit(
-            "Missing CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN. "
-            "Add these as GitHub Actions repository secrets before running this workflow."
-        )
-    manifest = run(args.plan, args.output, account_id, api_token, args.steps, args.pause_seconds)
+        raise SystemExit("Missing Cloudflare Workers AI repository secrets.")
+
+    manifest = run(
+        args.plan,
+        args.output,
+        account_id,
+        api_token,
+        reference_image_path=args.reference_image,
+        only_scene=args.only_scene,
+        pause_seconds=args.pause_seconds,
+    )
     print(f"Generated {manifest['scene_count']} unapproved scene images with {MODEL_ID}")
     print(f"Review directory: {args.output}")
     return 0
