@@ -101,7 +101,7 @@ class FairytaleVideoInputTests(unittest.TestCase):
                 audio.setnchannels(1)
                 audio.setsampwidth(2)
                 audio.setframerate(24000)
-                audio.writeframes(b"\\0\\0" * 24000)
+                audio.writeframes(b"\0\0" * 24000)
             text = "Once a miller made a foolish promise."
             row = {
                 "path": str(source),
