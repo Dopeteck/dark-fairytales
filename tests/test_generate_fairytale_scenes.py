@@ -4,7 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
@@ -142,7 +142,7 @@ class GeneratorTests(unittest.TestCase):
         second.json.return_value = {"result": {"image": self.image_b64}}
         session = Mock()
         session.post.side_effect = [first, second]
-        with unittest.mock.patch.object(generator.time, "sleep") as sleep:
+        with patch.object(generator.time, "sleep") as sleep:
             data = generator.generate_one("fairytale scene", "account", "token", session=session)
         self.assertTrue(data.startswith(b"\\xff\\xd8"))
         self.assertEqual(session.post.call_count, 2)
@@ -168,7 +168,8 @@ class GeneratorTests(unittest.TestCase):
             Image.new("RGB", (832, 1472), (60, 80, 100)).save(generated_buffer, format="JPEG")
             generated = generated_buffer.getvalue()
             original = generator.generate_one
-            generator.generate_one = Mock(return_value=generated)
+            generate_mock = Mock(return_value=generated)
+            generator.generate_one = generate_mock
             try:
                 manifest = generator.run(
                     plan_path, out, "account", "token",
@@ -179,7 +180,7 @@ class GeneratorTests(unittest.TestCase):
                 )
             finally:
                 generator.generate_one = original
-            self.assertEqual(generator.generate_one.call_count if isinstance(generator.generate_one, Mock) else 0, 0)
+            self.assertEqual(generate_mock.call_count, 2)
             self.assertEqual(manifest["scene_count"], 3)
             self.assertTrue(manifest["images"][0]["resumed_from_partial_run"])
             self.assertFalse(manifest["images"][1]["resumed_from_partial_run"])
