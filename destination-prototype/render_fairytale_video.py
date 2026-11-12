@@ -160,13 +160,13 @@ def _chapter_frame(frame: Image.Image, label: str, index: int) -> Image.Image:
         font=_font(23),
         fill=(226, 190, 117, 255),
     )
-    title_font = _font(39)
+    title_size = 39
+    title_font = _font(title_size)
     text = label.upper()
     max_width = right - left - 60
-    while text and draw.textbbox((0, 0), text, font=title_font)[2] > max_width:
-        title_font = _font(max(27, title_font.size - 2))
-        if title_font.size == 27:
-            break
+    while text and draw.textbbox((0, 0), text, font=title_font)[2] > max_width and title_size > 27:
+        title_size -= 2
+        title_font = _font(title_size)
     draw.text(
         (left + 30, top + 66),
         text,
