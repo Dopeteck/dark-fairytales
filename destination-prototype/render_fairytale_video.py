@@ -39,8 +39,7 @@ FPS = 30
 WIDTH, HEIGHT = 1080, 1920
 INTRO_SECONDS = 1.6
 CROSSFADE_SECONDS = 0.38
-INTER_SCENE_GAP = 0.16
-TARGET_MIN, TARGET_MAX = 45.0, 60.0
+TARGET_MIN, TARGET_MAX = 75.0, 115.0
 
 
 @lru_cache(maxsize=32)
@@ -245,31 +244,54 @@ def make_ambient(path: Path, duration: float) -> None:
     _write_wav(path, bed)
 
 
-def write_narration(path: Path, audio_rows: list[dict], total_seconds: float, intro_seconds: float):
-    events = []
-    cursor = intro_seconds
-    with wave.open(str(path), "wb") as out:
-        out.setnchannels(1)
-        out.setsampwidth(2)
-        out.setframerate(RATE)
-        out.writeframes(b"\0\0" * round(intro_seconds * RATE))
-        for index, row in enumerate(audio_rows):
-            with wave.open(row["path"], "rb") as src:
-                if (src.getnchannels(), src.getsampwidth(), src.getframerate()) != (1, 2, RATE):
-                    raise ValueError("Kokoro output must be mono 24kHz PCM")
-                frames = src.readframes(src.getnframes())
-                seconds = len(frames) / (2 * RATE)
-            out.writeframes(frames)
-            events.append({"start": cursor, "words": row["words"]})
-            cursor += seconds
-            if index < len(audio_rows) - 1:
-                gap = round(INTER_SCENE_GAP * RATE)
-                out.writeframes(b"\0\0" * gap)
-                cursor += gap / RATE
-        remaining = max(0, round(total_seconds * RATE) - round(cursor * RATE))
-        if remaining:
-            out.writeframes(b"\0\0" * remaining)
-    return events
+def _scene_entries(scenes: list[dict], words: list[dict], intro_seconds: float) -> list[dict]:
+    """Map one continuous word-timed narration track onto the visual beats."""
+    expected_words = sum(len(str(scene["narration"]).split()) for scene in scenes)
+    if len(words) != expected_words:
+        raise ValueError(
+            f"Continuous narration has {len(words)} timed words but the scene plan has {expected_words}"
+        )
+    entries = []
+    offset = 0
+    for scene in scenes:
+        count = len(str(scene["narration"]).split())
+        segment = words[offset:offset + count]
+        if not segment:
+            raise ValueError(f"No timed narration words found for scene {scene['id']}")
+        start_time = float(segment[0]["start"])
+        end_time = float(segment[-1]["end"])
+        entries.append({"start": intro_seconds + start_time, "duration": max(0.05, end_time - start_time)})
+        offset += count
+    return entries
+
+
+def write_continuous_narration(
+    path: Path,
+    audio_row: dict,
+    total_seconds: float,
+    intro_seconds: float,
+) -> list[dict]:
+    """Write one uninterrupted narration recording after the visual intro."""
+    with wave.open(audio_row["path"], "rb") as source:
+        if (source.getnchannels(), source.getsampwidth(), source.getframerate()) != (1, 2, RATE):
+            raise ValueError("Kokoro output must be mono 24kHz PCM")
+        frames = source.readframes(source.getnframes())
+        speech_seconds = len(frames) / (2 * RATE)
+    expected_speech = float(audio_row["duration"])
+    if abs(speech_seconds - expected_speech) > 0.08:
+        raise ValueError("Measured Kokoro WAV duration does not match its narration timing")
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(RATE)
+        output.writeframes(b"\\0\\0" * round(intro_seconds * RATE))
+        output.writeframes(frames)
+        remaining = round(total_seconds * RATE) - round((intro_seconds + speech_seconds) * RATE)
+        if remaining < -2:
+            raise ValueError("Continuous narration is longer than the target video")
+        if remaining > 0:
+            output.writeframes(b"\\0\\0" * remaining)
+    return [{"start": intro_seconds, "words": audio_row["words"]}]
 
 
 def _probe(path: Path) -> dict:
@@ -315,37 +337,38 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     contact_sheet = output_dir / "contact-sheet.jpg"
     make_contact_sheet(plan, images, contact_sheet)
 
+    # One full-script synthesis gives Kokoro the whole narrative arc instead of
+    # resetting voice/prosody at every still-image boundary.
+    story_text = "\\n\\n".join(scene["narration"].strip() for scene in plan["scenes"])
     narrator = Narrator(voice, speed)
-    audio_rows = []
-    for index, scene in enumerate(plan["scenes"], 1):
-        print(f"Narrating scene {index}/{len(plan['scenes'])}: {scene['title']}")
-        audio_rows.append(narrator.synthesize(scene["narration"], cache))
+    print(f"Narrating the complete {len(plan['scenes'])}-beat story in one continuous pass")
+    narration_row = narrator.synthesize(story_text, cache)
+    expected_total = INTRO_SECONDS + float(narration_row["duration"])
 
-    total_speech = sum(float(row["duration"]) for row in audio_rows)
-    expected_total = INTRO_SECONDS + total_speech + INTER_SCENE_GAP * (len(audio_rows) - 1)
     if not TARGET_MIN <= expected_total <= TARGET_MAX:
-        # One measured correction pass keeps the cut inside the requested short-form duration.
-        corrected_speed = max(0.78, min(1.25, speed * expected_total / 52.0))
+        target_seconds = 92.0
+        corrected_speed = max(0.78, min(1.25, speed * expected_total / target_seconds))
         if abs(corrected_speed - speed) < 0.015:
-            raise ValueError(f"Kokoro narration duration {expected_total:.2f}s does not fit the 45–60s target")
-        print(f"Adjusting Kokoro speed from {speed:.2f} to {corrected_speed:.2f} to meet the runtime target")
+            raise ValueError(
+                f"Continuous Kokoro narration is {expected_total:.2f}s, outside the "
+                f"{TARGET_MIN:.0f}–{TARGET_MAX:.0f}s review range"
+            )
+        print(f"Adjusting continuous Kokoro pace from {speed:.2f} to {corrected_speed:.2f}")
         narrator = Narrator(voice, corrected_speed)
-        audio_rows = [narrator.synthesize(scene["narration"], cache) for scene in plan["scenes"]]
-        total_speech = sum(float(row["duration"]) for row in audio_rows)
-        expected_total = INTRO_SECONDS + total_speech + 0.08 * (len(audio_rows) - 1)
+        narration_row = narrator.synthesize(story_text, cache)
+        expected_total = INTRO_SECONDS + float(narration_row["duration"])
         speed = corrected_speed
         if not TARGET_MIN <= expected_total <= TARGET_MAX:
-            raise ValueError(f"Adjusted narration duration {expected_total:.2f}s remains outside the 45–60s target")
+            raise ValueError(
+                f"Adjusted continuous narration is {expected_total:.2f}s, outside the "
+                f"{TARGET_MIN:.0f}–{TARGET_MAX:.0f}s review range"
+            )
 
-    entries = []
-    cursor = INTRO_SECONDS
-    for row in audio_rows:
-        duration = float(row["duration"])
-        entries.append({"start": cursor, "duration": duration})
-        cursor += duration + INTER_SCENE_GAP
+    entries = _scene_entries(plan["scenes"], narration_row["words"], INTRO_SECONDS)
     total = expected_total
-
-    events = write_narration(work / "narration.wav", audio_rows, total, INTRO_SECONDS)
+    events = write_continuous_narration(
+        work / "narration.wav", narration_row, total, INTRO_SECONDS
+    )
     ambient_path = work / "ambient.wav"
     make_ambient(ambient_path, total)
 
@@ -383,7 +406,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     finally:
         clip.close()
 
-    narration_events = [{"start": event["start"], "words": event["words"]} for event in events]
+    narration_events = events
     ass_path = work / "captions.ass"
     ass_path.write_text(build_ass(narration_events, (WIDTH, HEIGHT), karaoke=True), encoding="utf-8")
     audio_video = output_dir / "video.mp4"
@@ -405,7 +428,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         raise RuntimeError("Final FFmpeg mux failed: " + result.stderr[-2500:])
 
     probe = _probe(audio_video)
-    # Sidecar SRT lets the captions be read with players that support subtitle tracks.
+    # Sidecar SRT uses the timings for the single continuous narration take.
     srt_blocks, srt_index = [], 1
     for event in narration_events:
         words = event["words"]
@@ -419,9 +442,9 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
                 m, ms = divmod(ms, 60000)
                 sec, ms = divmod(ms, 1000)
                 return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
-            srt_blocks.append(f"{srt_index}\n{stamp(begin)} --> {stamp(end)}\n{' '.join(w['word'] for w in group)}\n")
+            srt_blocks.append(f"{srt_index}\\n{stamp(begin)} --> {stamp(end)}\\n{' '.join(w['word'] for w in group)}\\n")
             srt_index += 1
-    (output_dir / "captions.srt").write_text("\n".join(srt_blocks), encoding="utf-8")
+    (output_dir / "captions.srt").write_text("\\n".join(srt_blocks), encoding="utf-8")
 
     metadata = {
         "title": plan["title"],
@@ -432,12 +455,14 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         "duration_seconds": probe["duration_seconds"],
         "resolution": f"{WIDTH}x{HEIGHT}",
         "fps": FPS,
-        "narration": "Kokoro CPU TTS",
+        "narration": "Kokoro CPU TTS, one continuous full-story synthesis pass",
         "voice": voice,
         "voice_speed": speed,
         "music": "original procedural low ambient drone",
-        "captions": "burned-in karaoke-style plus SRT sidecar",
-        "transitions": f"{CROSSFADE_SECONDS:.2f}s crossfades",
+        "captions": "estimated word-timed karaoke captions plus SRT sidecar",
+        "transitions": f"{CROSSFADE_SECONDS:.2f}s crossfades aligned to story beat boundaries",
+        "narration_word_count": len(story_text.split()),
+        "storytelling_mode": "continuous narration; no per-scene voice resets",
         "image_manifest": str((images_dir / "generation-manifest.json").name),
         "preview_only": True,
         "approved": False,
@@ -448,8 +473,8 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     }
     write_json(output_dir / "render-metadata.json", metadata)
     (output_dir / "PREVIEW-ONLY.txt").write_text(
-        "PRIVATE REVIEW PREVIEW — NOT APPROVED FOR PUBLICATION.\n"
-        "All generated scene images and factual narration require human review.\n",
+        "PRIVATE REVIEW PREVIEW — NOT APPROVED FOR PUBLICATION.\\n"
+        "All generated scene images and factual narration require human review.\\n",
         encoding="utf-8",
     )
     description = (
@@ -469,7 +494,7 @@ def main() -> int:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--images", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--voice", choices=("bm_george", "bm_fable", "am_michael"), default="bm_george")
+    parser.add_argument("--voice", choices=("bm_george", "bm_fable", "am_michael"), default="bm_fable")
     parser.add_argument("--speed", type=float, default=1.0)
     args = parser.parse_args()
     video, _ = render(args.plan, args.images, args.out, args.voice, args.speed)
