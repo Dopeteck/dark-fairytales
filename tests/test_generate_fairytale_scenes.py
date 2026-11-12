@@ -32,7 +32,7 @@ class GeneratorTests(unittest.TestCase):
         self.image_b64 = base64.b64encode(self.image_bytes).decode("ascii")
 
     def _reference_file(self, path: Path):
-        Image.new("RGB", (512, 512), (90, 60, 35)).save(path, format="PNG")
+        Image.new("RGB", (510, 510), (90, 60, 35)).save(path, format="PNG")
         return path
 
     def test_prompt_contains_shared_style_and_scene_direction(self):
@@ -133,8 +133,8 @@ class GeneratorTests(unittest.TestCase):
                 generator.run(plan_path, root / "out", "account", "token", only_scene="beat-05-child-pact")
 
             oversized = root / "large.png"
-            Image.new("RGB", (600, 600)).save(oversized)
-            with self.assertRaisesRegex(ValueError, "512x512"):
+            Image.new("RGB", (512, 512)).save(oversized)
+            with self.assertRaisesRegex(ValueError, "strictly smaller than 512x512"):
                 generator.run(
                     plan_path, root / "out", "account", "token",
                     reference_image_path=oversized, only_scene="beat-05-child-pact"
