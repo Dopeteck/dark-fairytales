@@ -162,6 +162,7 @@ def generate_one(
     account_id: str,
     api_token: str,
     reference_image: bytes | None = None,
+    scale_reference_image: bytes | None = None,
     width: int = OUTPUT_WIDTH,
     height: int = OUTPUT_HEIGHT,
     guidance: float = 4.0,
@@ -177,6 +178,8 @@ def generate_one(
     ]
     if reference_image is not None:
         fields.append(("input_image_0", ("rumpelstiltskin-reference.png", reference_image, "image/png")))
+    if scale_reference_image is not None:
+        fields.append(("input_image_1", ("height-scale-guide.png", scale_reference_image, "image/png")))
     response = session.post(
         url,
         headers={"Authorization": f"Bearer {api_token}"},
@@ -200,6 +203,7 @@ def run(
     account_id: str,
     api_token: str,
     reference_image_path: Path | None = None,
+    scale_reference_path: Path | None = None,
     only_scene: str | None = None,
     pause_seconds: float = 1.0,
 ) -> dict[str, Any]:
@@ -214,18 +218,28 @@ def run(
 
     uses_rumpel = any(str(scene.get("id")) in RUMPELSTILTSKIN_SCENES for scene in scenes)
     reference_bytes = None
+    scale_reference_bytes = None
     if uses_rumpel:
         if reference_image_path is None or not reference_image_path.is_file():
-            raise ValueError("Rumpelstiltskin scenes require a visual reference image")
-        with Image.open(reference_image_path) as ref:
-            ref.verify()
-        with Image.open(reference_image_path) as ref:
-            if ref.width >= 512 or ref.height >= 512:
-                raise ValueError("FLUX.2 Klein reference images must be strictly smaller than 512x512 pixels")
-            ref_format = ref.format
-        if ref_format not in {"PNG", "JPEG", "WEBP"}:
-            raise ValueError(f"Unsupported reference format: {ref_format}")
+            raise ValueError("Rumpelstiltskin scenes require a visual identity reference image")
+        if scale_reference_path is None or not scale_reference_path.is_file():
+            raise ValueError("Rumpelstiltskin scenes require a separate height-scale reference image")
+        for ref_path, label in (
+            (reference_image_path, "identity"),
+            (scale_reference_path, "height-scale"),
+        ):
+            with Image.open(ref_path) as ref:
+                ref.verify()
+            with Image.open(ref_path) as ref:
+                if ref.width >= 512 or ref.height >= 512:
+                    raise ValueError(
+                        f"FLUX.2 Klein {label} reference images must be strictly smaller than 512x512 pixels"
+                    )
+                ref_format = ref.format
+            if ref_format not in {"PNG", "JPEG", "WEBP"}:
+                raise ValueError(f"Unsupported {label} reference format: {ref_format}")
         reference_bytes = reference_image_path.read_bytes()
+        scale_reference_bytes = scale_reference_path.read_bytes()
 
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, Any] = {
@@ -238,6 +252,7 @@ def run(
         "rendered": False,
         "published": False,
         "reference_image_sha256": hashlib.sha256(reference_bytes).hexdigest() if reference_bytes else None,
+        "scale_reference_sha256": hashlib.sha256(scale_reference_bytes).hexdigest() if scale_reference_bytes else None,
         "images": [],
     }
 
@@ -245,11 +260,13 @@ def run(
         scene_id = str(scene["id"])
         prompt = build_prompt(scene, index)
         scene_reference = reference_bytes if scene_id in RUMPELSTILTSKIN_SCENES else None
+        scene_scale_reference = scale_reference_bytes if scene_id in RUMPELSTILTSKIN_SCENES else None
         data = generate_one(
             prompt,
             account_id,
             api_token,
             reference_image=scene_reference,
+            scale_reference_image=scene_scale_reference,
         )
 
         with Image.open(io.BytesIO(data)) as image:
@@ -275,6 +292,7 @@ def run(
             "sha256": hashlib.sha256(data).hexdigest(),
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "uses_character_reference": scene_reference is not None,
+            "uses_scale_reference": scene_scale_reference is not None,
             "approved": False,
         })
         print(f"Generated {index}/{len(scenes)}: {filename} ({width}x{height})")
@@ -292,6 +310,7 @@ def main() -> int:
     parser.add_argument("--plan", type=Path, default=Path("research/rumpelstiltskin-pilot.json"))
     parser.add_argument("--output", type=Path, default=Path("output/rumpelstiltskin-generated-scenes"))
     parser.add_argument("--reference-image", type=Path, default=None)
+    parser.add_argument("--scale-reference-image", type=Path, default=None)
     parser.add_argument("--only-scene", type=str, default=None)
     parser.add_argument("--pause-seconds", type=float, default=1.0)
     args = parser.parse_args()
@@ -307,6 +326,7 @@ def main() -> int:
         account_id,
         api_token,
         reference_image_path=args.reference_image,
+        scale_reference_path=args.scale_reference_image,
         only_scene=args.only_scene,
         pause_seconds=args.pause_seconds,
     )
