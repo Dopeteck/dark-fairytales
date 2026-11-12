@@ -220,8 +220,8 @@ def run(
         with Image.open(reference_image_path) as ref:
             ref.verify()
         with Image.open(reference_image_path) as ref:
-            if ref.width > 512 or ref.height > 512:
-                raise ValueError("FLUX.2 Klein reference images must be 512x512 pixels or smaller")
+            if ref.width >= 512 or ref.height >= 512:
+                raise ValueError("FLUX.2 Klein reference images must be strictly smaller than 512x512 pixels")
             ref_format = ref.format
         if ref_format not in {"PNG", "JPEG", "WEBP"}:
             raise ValueError(f"Unsupported reference format: {ref_format}")
