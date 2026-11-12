@@ -189,6 +189,41 @@ class GeneratorTests(unittest.TestCase):
             self.assertTrue((out / "generation-manifest.json").is_file())
             self.assertEqual(len(list(out.glob("*.jpg"))), 3)
 
+    def test_character_scene_falls_back_to_4b_after_exhausted_9b_transient_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plan_path = root / "plan.json"
+            plan_path.write_text(json.dumps({"title": "Fallback test", "scenes": [
+                self.plan["scenes"][1]
+            ]}), encoding="utf-8")
+            identity = self._reference_file(root / "identity.png")
+            scale = self._reference_file(root / "scale.png")
+            original = generator.generate_one
+            generate_mock = Mock(side_effect=[
+                RuntimeError("Cloudflare Workers AI transient HTTP 500 persisted after 4 attempts"),
+                self.image_bytes,
+            ])
+            generator.generate_one = generate_mock
+            try:
+                manifest = generator.run(
+                    plan_path, root / "images", "account", "token",
+                    reference_image_path=identity,
+                    scale_reference_path=scale,
+                    only_scene="beat-05-child-pact",
+                    pause_seconds=0,
+                )
+            finally:
+                generator.generate_one = original
+            self.assertEqual(generate_mock.call_count, 2)
+            self.assertEqual(generate_mock.call_args_list[0].kwargs["model_id"], generator.RUMPELSTILTSKIN_MODEL_ID)
+            self.assertEqual(generate_mock.call_args_list[1].kwargs["model_id"], generator.MODEL_ID)
+            item = manifest["images"][0]
+            self.assertEqual(item["preferred_model"], generator.RUMPELSTILTSKIN_MODEL_ID)
+            self.assertEqual(item["model"], generator.MODEL_ID)
+            self.assertTrue(item["model_fallback_used"])
+            self.assertTrue(item["uses_character_reference"])
+            self.assertTrue(item["uses_scale_reference"])
+
     def test_http_errors_are_clear(self):
         response = Mock(status_code=429, text="rate limited")
         session = Mock()
