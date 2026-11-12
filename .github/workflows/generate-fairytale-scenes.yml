@@ -65,9 +65,9 @@ jobs:
               image = original.convert("RGB")
               # Isolate the full dwarf, including his cap, beard, costume and shoes.
               crop = image.crop((505, 520, 832, 1435))
-              crop.thumbnail((220, 512), Image.Resampling.LANCZOS)
-              canvas = Image.new("RGB", (512, 512), (95, 91, 84))
-              canvas.paste(crop, ((512 - crop.width) // 2, (512 - crop.height) // 2))
+              crop.thumbnail((218, 510), Image.Resampling.LANCZOS)
+              canvas = Image.new("RGB", (510, 510), (95, 91, 84))
+              canvas.paste(crop, ((510 - crop.width) // 2, (510 - crop.height) // 2))
               canvas.save(out, format="PNG")
           print(f"Prepared character reference: {out} ({out.stat().st_size} bytes)")
           PY
