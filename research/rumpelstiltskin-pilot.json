@@ -1,14 +1,14 @@
 {
   "series": "The Dark Side of Once Upon a Time",
-  "title": "Rumpelstiltskin: The Name That Broke the Bargain",
+  "title": "Rumpelstiltskin: The Bargain and the Secret Name",
   "story_family": "Grimm, KHM 55",
   "version_scope": "Brothers Grimm, final 1857 German edition, as rendered in Margaret Hunt's 1884 English translation. This is one documented literary version, not a claim about the tale's first or only form.",
   "format": "dark_folklore_documentary",
   "status": "draft_needs_human_fact_check_and_asset_review",
   "aspect_ratio": "9:16",
   "target_fps": 30,
-  "target_duration_seconds": 49.5,
-  "narration_word_count": 134,
+  "target_duration_seconds": 90,
+  "narration_word_count": 224,
   "source_ids": [
     "grimm1857_hunt1884"
   ],
@@ -22,14 +22,14 @@
       "scope_note": "The linked online transcription is Hunt's English text based on the Grimm tale; the episode identifies the German source edition and translation separately. The 1857 story ends with Rumpelstiltskin stamping his foot into the floor and wrenching it free."
     }
   ],
-  "narration": "A miller boasts that his daughter can spin straw into gold. The king locks her in a straw-filled room: “Gold by morning—or die.” A tiny stranger appears. He spins the straw in exchange for her necklace. The next night, the king brings more straw. The stranger takes her ring in exchange for gold. On the third night, she has nothing left to pay. The king promises to make her queen. The stranger demands her first child. She agrees. The gold earns her the crown. When her baby is born, the stranger returns to claim it. She begs for time. He gives her three days to guess his name. A messenger finds him dancing in the forest and overhears his secret. The queen cries, “Rumpelstiltskin!” The little man vanishes in fury. Her child is safe.",
+  "narration": "Long ago, a poor miller wanted to impress the king. He boasted that his daughter could spin straw into gold. The king didn't ask if it was true. He locked her in a room full of straw. “Make it gold by morning—or die.” She wept beside the wheel. A tiny man appeared. “I can spin it—but what will you give me?” Her necklace. By dawn, the straw was gold. The king wanted more. On the second night, he filled a bigger room with straw. The stranger returned and took her ring. On the third night, the room was bigger still. She had nothing left. The king promised to marry her if she succeeded. The stranger demanded her first child. Desperate, she agreed. The king kept his promise. A year later, the stranger returned for the queen's baby. She offered him all the kingdom's riches, but he refused. He wanted something living. He gave her three days to guess his name. For two days, she tried every name she knew while her messengers searched the land. On the third day, one messenger found him dancing beside a fire at the forest's edge, singing his secret name. The queen spoke the name: “Rumpelstiltskin!” In fury, he stamped his foot deep into the floor and had to wrench it free. Then he fled. Her child was safe.",
   "scenes": [
     {
       "id": "beat-02-boast",
       "type": "still_kenburns",
-      "duration_seconds": 5.2,
-      "narration": "A miller boasts that his daughter can spin straw into gold.",
-      "title": "The Miller's Boast",
+      "duration_seconds": 8,
+      "narration": "Long ago, a poor miller wanted to impress the king. He boasted that his daughter could spin straw into gold.",
+      "title": "The Miller's Foolish Boast",
       "source_ids": [
         "grimm1857_hunt1884"
       ],
@@ -49,8 +49,8 @@
     {
       "id": "beat-01-threat",
       "type": "still_kenburns",
-      "duration_seconds": 5.2,
-      "narration": "The king locks her in a straw-filled room: “Gold by morning—or die.”",
+      "duration_seconds": 9,
+      "narration": "The king didn't ask if it was true. He locked her in a room full of straw. “Make it gold by morning—or die.”",
       "title": "A Deadly Test",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -66,14 +66,14 @@
         "minimum_resolution": "1920x1080",
         "status": "missing"
       },
-      "chapter": "THE DEADLY TEST"
+      "chapter": "GOLD BY MORNING—OR DIE"
     },
     {
       "id": "beat-03-first-bargains",
       "type": "still_kenburns",
-      "duration_seconds": 5.2,
-      "narration": "A tiny stranger appears. He spins the straw in exchange for her necklace.",
-      "title": "The First Price",
+      "duration_seconds": 11,
+      "narration": "She wept beside the wheel. A tiny man appeared. “I can spin it—but what will you give me?” Her necklace. By dawn, the straw was gold.",
+      "title": "A Stranger at the Wheel",
       "source_ids": [
         "grimm1857_hunt1884"
       ],
@@ -93,9 +93,9 @@
     {
       "id": "beat-04-king-demands",
       "type": "still_kenburns",
-      "duration_seconds": 5.2,
-      "narration": "The next night, the king brings more straw. The stranger takes her ring in exchange for gold.",
-      "title": "The Second Price",
+      "duration_seconds": 9,
+      "narration": "The king wanted more. On the second night, he filled a bigger room with straw. The stranger returned and took her ring.",
+      "title": "The King Wants More",
       "source_ids": [
         "grimm1857_hunt1884"
       ],
@@ -115,9 +115,9 @@
     {
       "id": "beat-05-child-pact",
       "type": "still_kenburns",
-      "duration_seconds": 5.4,
-      "narration": "On the third night, she has nothing left to pay. The king promises to make her queen. The stranger demands her first child. She agrees.",
-      "title": "The Final Bargain",
+      "duration_seconds": 12,
+      "narration": "On the third night, the room was bigger still. She had nothing left. The king promised to marry her if she succeeded. The stranger demanded her first child. Desperate, she agreed.",
+      "title": "The Price of a Crown",
       "source_ids": [
         "grimm1857_hunt1884"
       ],
@@ -137,9 +137,9 @@
     {
       "id": "beat-06-claim",
       "type": "still_kenburns",
-      "duration_seconds": 5.4,
-      "narration": "The gold earns her the crown. When her baby is born, the stranger returns to claim it.",
-      "title": "The Promise Returns",
+      "duration_seconds": 11,
+      "narration": "The king kept his promise. A year later, the stranger returned for the queen's baby. She offered him all the kingdom's riches, but he refused. He wanted something living.",
+      "title": "The Promise Comes Due",
       "source_ids": [
         "grimm1857_hunt1884"
       ],
@@ -154,13 +154,13 @@
         "minimum_resolution": "1920x1080",
         "status": "missing"
       },
-      "chapter": "THE STRANGER RETURNS"
+      "chapter": "A YEAR LATER"
     },
     {
       "id": "beat-07-three-days",
       "type": "still_kenburns",
-      "duration_seconds": 5.4,
-      "narration": "She begs for time. He gives her three days to guess his name.",
+      "duration_seconds": 10,
+      "narration": "He gave her three days to guess his name. For two days, she tried every name she knew while her messengers searched the land.",
       "title": "Three Days to Guess",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -176,13 +176,13 @@
         "minimum_resolution": "1920x1080",
         "status": "missing"
       },
-      "chapter": "THREE DAYS"
+      "chapter": "THREE DAYS TO NAME HIM"
     },
     {
       "id": "beat-08-forest-fire",
       "type": "still_kenburns",
-      "duration_seconds": 5.4,
-      "narration": "A messenger finds him dancing in the forest and overhears his secret.",
+      "duration_seconds": 9,
+      "narration": "On the third day, one messenger found him dancing beside a fire at the forest's edge, singing his secret name.",
       "title": "The Secret in the Forest",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -198,13 +198,13 @@
         "minimum_resolution": "1920x1080",
         "status": "missing"
       },
-      "chapter": "THE SECRET"
+      "chapter": "THE MESSENGER'S DISCOVERY"
     },
     {
       "id": "beat-09-foot-revelation",
       "type": "still_kenburns",
-      "duration_seconds": 7.1,
-      "narration": "The queen cries, “Rumpelstiltskin!” The little man vanishes in fury. Her child is safe.",
+      "duration_seconds": 11,
+      "narration": "The queen spoke the name: “Rumpelstiltskin!” In fury, he stamped his foot deep into the floor and had to wrench it free. Then he fled. Her child was safe.",
       "title": "The Name Breaks the Bargain",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -220,7 +220,7 @@
         "minimum_resolution": "1920x1080",
         "status": "missing"
       },
-      "chapter": "THE NAME IS SPOKEN"
+      "chapter": "RUMPELSTILTSKIN!"
     }
   ],
   "asset_policy": {
