@@ -75,6 +75,26 @@ jobs:
                   print(name, image.size)
           PY
 
+      - name: Restore partial images from the previous Cloudflare interruption
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: rumpelstiltskin-full-video-review-43251353954
+          path: output/partial-source
+          run-id: 43251353954
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reuse already generated scenes
+        run: |
+          mkdir -p output/rumpelstiltskin-generated-scenes
+          if [ -d output/partial-source/rumpelstiltskin-generated-scenes ]; then
+            find output/partial-source/rumpelstiltskin-generated-scenes -maxdepth 1 -type f \\
+              \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \\) \\
+              -exec cp -n {} output/rumpelstiltskin-generated-scenes/ \\;
+          fi
+          echo "Verified candidates to resume:"
+          find output/rumpelstiltskin-generated-scenes -maxdepth 1 -type f | sort || true
+
       - name: Run image-generation tests and compile both pipelines
         run: |
           python -m unittest discover -s tests -p "test_generate_fairytale_scenes.py" -v
@@ -98,7 +118,7 @@ jobs:
             --plan research/rumpelstiltskin-pilot.json \
             --reference-image output/character-reference/rumpelstiltskin.png \
             --scale-reference-image output/character-reference/height-scale.png \
-            --output output/rumpelstiltskin-generated-scenes
+            --output output/rumpelstiltskin-generated-scenes \\\n            --resume
 
       - name: Generate only the child-pact pilot
         if: github.event_name == 'workflow_dispatch' && inputs.scope == 'pilot'
