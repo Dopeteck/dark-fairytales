@@ -380,6 +380,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         "title": plan["title"],
         "series": plan.get("series"),
         "model_strategy": generation_manifest.get("model_strategy", {}),
+        "symbolic_final_scene_note": generation_manifest.get("symbolic_final_scene_note"),
         "scene_count": len(images),
         "duration_seconds": probe["duration_seconds"],
         "resolution": f"{WIDTH}x{HEIGHT}",
@@ -404,11 +405,14 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         "All generated scene images and factual narration require human review.\n",
         encoding="utf-8",
     )
-    (output_dir / "description.txt").write_text(
-        plan["title"] + "\n\n" + plan["narration"] + "\n\n"
-        "PREVIEW ONLY — do not publish or distribute as a final factual episode.\n",
-        encoding="utf-8",
+    description = (
+        plan["title"] + "\\n\\n" + plan["narration"] + "\\n\\n"
+        "PREVIEW ONLY — do not publish or distribute as a final factual episode.\\n"
     )
+    symbolic_note = generation_manifest.get("symbolic_final_scene_note")
+    if symbolic_note:
+        description += "\\nVISUAL NOTE: " + symbolic_note + "\\n"
+    (output_dir / "description.txt").write_text(description, encoding="utf-8")
     print(f"Preview MP4 created: {audio_video} ({probe['duration_seconds']:.2f}s)")
     return audio_video, metadata
 
