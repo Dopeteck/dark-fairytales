@@ -113,7 +113,7 @@ class GeneratorTests(unittest.TestCase):
         self.assertTrue(data.startswith(b"\xff\xd8"))
         session.post.assert_called_once()
         args, kwargs = session.post.call_args
-        self.assertIn("/ai/run/@cf/black-forest-labs/flux-2-klein-4b", args[0])
+        self.assertIn("/ai/run/@cf/black-forest-labs/flux-2-klein-9b", args[0])
         file_fields = {name: value for name, value in kwargs["files"]}
         self.assertEqual(file_fields["prompt"], (None, "a fairytale scene"))
         self.assertEqual(file_fields["width"], (None, "832"))
@@ -186,7 +186,7 @@ class GeneratorTests(unittest.TestCase):
                     pause_seconds=0,
                 )
                 self.assertEqual(manifest["scene_count"], 1)
-                self.assertEqual(manifest["model"], "@cf/black-forest-labs/flux-2-klein-4b")
+                self.assertEqual(manifest["model"], "@cf/black-forest-labs/flux-2-klein-9b")
                 self.assertFalse(manifest["approved"])
                 self.assertFalse(manifest["rendered"])
                 self.assertTrue((out / "01-beat-05-child-pact.jpg").is_file())
