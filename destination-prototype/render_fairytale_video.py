@@ -284,13 +284,13 @@ def write_continuous_narration(
         output.setnchannels(1)
         output.setsampwidth(2)
         output.setframerate(RATE)
-        output.writeframes(b"\\0\\0" * round(intro_seconds * RATE))
+        output.writeframes(b"\0\0" * round(intro_seconds * RATE))
         output.writeframes(frames)
         remaining = round(total_seconds * RATE) - round((intro_seconds + speech_seconds) * RATE)
         if remaining < -2:
             raise ValueError("Continuous narration is longer than the target video")
         if remaining > 0:
-            output.writeframes(b"\\0\\0" * remaining)
+            output.writeframes(b"\0\0" * remaining)
     return [{"start": intro_seconds, "words": audio_row["words"]}]
 
 
