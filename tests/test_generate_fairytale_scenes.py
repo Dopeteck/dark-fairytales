@@ -60,6 +60,7 @@ class GeneratorTests(unittest.TestCase):
         ):
             self.assertIn(required.lower(), prompt.lower())
         self.assertIn("There is NO child in this scene", prompt)
+        self.assertIn("Dark medieval European fairytale", prompt)
         self.assertIn("knee joint", prompt)
         self.assertNotIn("hip", prompt.lower())
         self.assertLessEqual(len(prompt), 2048)
