@@ -90,7 +90,7 @@ SCENE_VISUALS = {
         "Wide full-length view in a medieval royal chamber. The adult queen, in her early "
         "twenties, stands beside her peacefully sleeping infant's cradle. Rumpelstiltskin "
         "faces her on the same floor: a tiny 60-centimetre male dwarf whose red cap reaches "
-        "only her hip. Show his full body, short bowed legs and curled shoes, with the "
+        "no higher than her knee. Show his full body, short bowed legs and curled shoes, with the "
         "queen's much taller adult body visible for scale. No threat to the baby."
     ),
     "beat-07-three-days": (
