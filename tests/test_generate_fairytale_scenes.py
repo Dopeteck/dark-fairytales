@@ -52,7 +52,7 @@ class GeneratorTests(unittest.TestCase):
             "deep-blue tunic",
             "ochre breeches",
             "never a woman",
-            "NOT a child",
+            "never a woman, child",
         ):
             self.assertIn(required, prompt)
         self.assertLessEqual(len(prompt), 2048)
@@ -74,10 +74,10 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(generator.RUMPELSTILTSKIN_SCENES, expected)
         for index, scene_id in enumerate(sorted(expected), 1):
             prompt = generator.build_prompt({"id": scene_id, "title": scene_id}, index)
-            self.assertIn("RUMPELSTILTSKIN MUST BE TINY", prompt)
+            self.assertIn("RUMPELSTILTSKIN: tiny", prompt)
             self.assertIn("60 cm", prompt)
-            self.assertIn("white beard", prompt)
-            self.assertIn("red pointed cap", prompt)
+            self.assertIn("long white beard", prompt)
+            self.assertIn("tall red pointed cap", prompt)
             self.assertLessEqual(len(prompt), 2048)
 
     def test_unknown_scene_fails_closed(self):
