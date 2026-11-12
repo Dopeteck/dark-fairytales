@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+"""Render a private, review-only Rumpelstiltskin short from generated scene images.
+
+The renderer never approves assets or publishes/sends the MP4. It requires all
+nine generated images and records preview_only=true in the output metadata.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import shutil
+import subprocess
+import tempfile
+import time
+import wave
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+from moviepy.video.VideoClip import VideoClip
+
+from captions import build_ass, word_timings
+from folklore_plan import validate_folklore_plan
+from tts import Narrator, RATE
+from story_store import write_json
+
+FPS = 30
+WIDTH, HEIGHT = 1080, 1920
+INTRO_SECONDS = 1.6
+CROSSFADE_SECONDS = 0.38
+TARGET_MIN, TARGET_MAX = 45.0, 60.0
+
+
+def _font(size: int, bold: bool = True):
+    candidates = (
+        ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+         "C:/Windows/Fonts/arialbd.ttf"]
+        if bold else
+        ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+         "C:/Windows/Fonts/arial.ttf"]
+    )
+    for path in candidates:
+        if Path(path).is_file():
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default()
+
+
+def _safe_output_dir(path: Path) -> Path:
+    path = path.resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    if any(path.iterdir()):
+        raise ValueError(f"Output directory must be empty: {path}")
+    return path
+
+
+def load_inputs(plan_path: Path, images_dir: Path):
+    plan_raw = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan = validate_folklore_plan(plan_raw)
+    manifest_path = images_dir / "generation-manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("Missing generation-manifest.json; refusing to render untracked images")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("approved") is not False or manifest.get("published") is not False:
+        raise ValueError("Generated artwork manifest must remain explicitly unapproved and unpublished")
+    if manifest.get("status") != "generated_unapproved_review_only":
+        raise ValueError("Unexpected image-generation manifest status")
+    rows = {str(row.get("scene_id")): row for row in manifest.get("images", []) if isinstance(row, dict)}
+    expected = [scene["id"] for scene in plan["scenes"]]
+    if manifest.get("scene_count") != len(expected) or set(rows) != set(expected):
+        raise ValueError(f"Expected exactly {len(expected)} generated scene images; found {len(rows)}")
+    images = []
+    for scene in plan["scenes"]:
+        row = rows[scene["id"]]
+        image_path = images_dir / str(row.get("file", ""))
+        if not image_path.is_file():
+            raise ValueError(f"Missing generated image for {scene['id']}: {image_path.name}")
+        data = image_path.read_bytes()
+        if row.get("sha256") and hashlib.sha256(data).hexdigest() != row["sha256"]:
+            raise ValueError(f"Image checksum mismatch for {scene['id']}")
+        with Image.open(image_path) as opened:
+            opened.verify()
+        with Image.open(image_path) as opened:
+            image = opened.convert("RGB")
+            if image.width < 700 or image.height < 1200:
+                raise ValueError(f"Image resolution is too small for {scene['id']}: {image.size}")
+            ratio = image.width / image.height
+            if abs(ratio - (9 / 16)) > 0.035:
+                raise ValueError(f"Image is not portrait 9:16 for {scene['id']}: {image.size}")
+            if image.getbbox() is None:
+                raise ValueError(f"Blank generated image for {scene['id']}")
+            images.append(image.copy())
+    return plan, manifest, rows, images
+
+
+def make_contact_sheet(plan: dict, images: list[Image.Image], path: Path) -> None:
+    thumb_w, thumb_h = 240, 426
+    sheet = Image.new("RGB", (thumb_w * 3, thumb_h * 3), (22, 23, 27))
+    draw = ImageDraw.Draw(sheet)
+    for i, (scene, image) in enumerate(zip(plan["scenes"], images)):
+        thumb = ImageOps.fit(image, (thumb_w, thumb_h), method=Image.Resampling.LANCZOS)
+        x, y = (i % 3) * thumb_w, (i // 3) * thumb_h
+        sheet.paste(thumb, (x, y))
+        draw.rectangle((x, y + thumb_h - 48, x + thumb_w, y + thumb_h), fill=(0, 0, 0))
+        label = f"{i + 1}. {scene['title']}"[:38]
+        draw.text((x + 8, y + thumb_h - 37), label, font=_font(14), fill="white")
+    sheet.save(path, quality=92)
+
+
+def _prepare_canvas(image: Image.Image) -> Image.Image:
+    # Overscan gives the slow Ken Burns move room without exposing blank edges.
+    return ImageOps.fit(
+        image.convert("RGB"),
+        (round(WIDTH * 1.08), round(HEIGHT * 1.08)),
+        method=Image.Resampling.LANCZOS,
+    )
+
+
+def _scene_frame(canvas: Image.Image, progress: float) -> Image.Image:
+    progress = max(0.0, min(1.0, progress))
+    zoom = 1.0 + 0.08 * progress
+    crop_w = max(WIDTH, round(canvas.width / zoom))
+    crop_h = max(HEIGHT, round(canvas.height / zoom))
+    # A subtle alternating pan keeps the still images alive without aggressive motion.
+    direction = 1 if progress < 0.5 else -1
+    pan = round(direction * (progress if progress < 0.5 else 1 - progress) * 18)
+    left = max(0, min(canvas.width - crop_w, (canvas.width - crop_w) // 2 + pan))
+    top = max(0, min(canvas.height - crop_h, (canvas.height - crop_h) // 2))
+    return canvas.crop((left, top, left + crop_w, top + crop_h)).resize(
+        (WIDTH, HEIGHT), Image.Resampling.LANCZOS
+    )
+
+
+def _intro_frame(image: Image.Image, title: str) -> Image.Image:
+    frame = ImageOps.fit(image.convert("RGB"), (WIDTH, HEIGHT), method=Image.Resampling.LANCZOS).convert("RGBA")
+    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    box = (58, 130, WIDTH - 58, 330)
+    draw.rounded_rectangle(box, radius=34, fill=(8, 12, 18, 182), outline=(205, 166, 91, 210), width=3)
+    font = _font(58)
+    words = title.split()
+    lines, line = [], ""
+    for word in words:
+        candidate = (line + " " + word).strip()
+        if draw.textbbox((0, 0), candidate, font=font)[2] <= box[2] - box[0] - 44:
+            line = candidate
+        else:
+            if line:
+                lines.append(line)
+            line = word
+    if line:
+        lines.append(line)
+    lines = lines[:2]
+    line_h = 72
+    y = box[1] + (box[3] - box[1] - len(lines) * line_h) // 2
+    for text in lines:
+        draw.text((WIDTH // 2, y), text, font=font, fill=(255, 248, 230), anchor="mm",
+                  stroke_width=2, stroke_fill=(0, 0, 0, 180))
+        y += line_h
+    return Image.alpha_composite(frame, overlay).convert("RGB")
+
+
+def _write_wav(path: Path, samples: np.ndarray) -> None:
+    data = np.asarray(samples, dtype=np.float32).reshape(-1)
+    if not data.size or not np.isfinite(data).all():
+        raise ValueError("Audio is empty or contains non-finite samples")
+    pcm = (np.clip(data, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(RATE)
+        out.writeframes(pcm)
+
+
+def make_ambient(path: Path, duration: float) -> None:
+    """Create a quiet original atmospheric drone; no external music asset is used."""
+    count = max(1, round(duration * RATE))
+    t = np.arange(count, dtype=np.float32) / RATE
+    slow = 0.76 + 0.16 * np.sin(2 * np.pi * 0.075 * t) + 0.08 * np.sin(2 * np.pi * 0.031 * t + 1.2)
+    bed = (
+        0.030 * np.sin(2 * np.pi * 55.0 * t)
+        + 0.018 * np.sin(2 * np.pi * 82.41 * t + 0.4)
+        + 0.010 * np.sin(2 * np.pi * 110.0 * t + 1.1)
+    ) * slow
+    rng = np.random.default_rng(20261112)
+    noise = rng.normal(0.0, 1.0, count).astype(np.float32)
+    # Smooth filtered noise provides a little air without sounding like static.
+    kernel = np.ones(420, dtype=np.float32) / 420
+    airy = np.convolve(noise, kernel, mode="same")
+    peak = max(1e-6, float(np.max(np.abs(airy))))
+    bed += (airy / peak) * 0.0025
+    fade = min(RATE * 1.5, count // 3)
+    if fade:
+        bed[:fade] *= np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        bed[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+    _write_wav(path, bed)
+
+
+def write_narration(path: Path, audio_rows: list[dict], total_seconds: float, intro_seconds: float):
+    events = []
+    cursor = intro_seconds
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(RATE)
+        out.writeframes(b"\0\0" * round(intro_seconds * RATE))
+        for index, row in enumerate(audio_rows):
+            with wave.open(row["path"], "rb") as src:
+                if (src.getnchannels(), src.getsampwidth(), src.getframerate()) != (1, 2, RATE):
+                    raise ValueError("Kokoro output must be mono 24kHz PCM")
+                frames = src.readframes(src.getnframes())
+                seconds = len(frames) / (2 * RATE)
+            out.writeframes(frames)
+            events.append({"start": cursor, "words": row["words"]})
+            cursor += seconds
+            if index < len(audio_rows) - 1:
+                gap = round(0.08 * RATE)
+                out.writeframes(b"\0\0" * gap)
+                cursor += gap / RATE
+        remaining = max(0, round(total_seconds * RATE) - round(cursor * RATE))
+        if remaining:
+            out.writeframes(b"\0\0" * remaining)
+    return events
+
+
+def _probe(path: Path) -> dict:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "stream=codec_type,width,height,r_frame_rate", "-show_entries",
+         "format=duration", "-of", "json", str(path)],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode:
+        raise RuntimeError("ffprobe could not inspect the preview MP4")
+    data = json.loads(result.stdout)
+    video = next((x for x in data.get("streams", []) if x.get("codec_type") == "video"), None)
+    audio = next((x for x in data.get("streams", []) if x.get("codec_type") == "audio"), None)
+    if not video or not audio:
+        raise ValueError("Rendered MP4 must contain video and narration audio")
+    duration = float(data["format"]["duration"])
+    if (video.get("width"), video.get("height"), video.get("r_frame_rate")) != (WIDTH, HEIGHT, "30/1"):
+        raise ValueError(f"Wrong video format: {video}")
+    if not TARGET_MIN <= duration <= TARGET_MAX:
+        raise ValueError(f"Rendered duration {duration:.2f}s is outside {TARGET_MIN:.0f}–{TARGET_MAX:.0f}s")
+    return {"duration_seconds": duration, "video_stream": video, "audio_stream": audio}
+
+
+def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, speed: float):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        raise RuntimeError("FFmpeg and ffprobe are required")
+    plan, generation_manifest, rows, images = load_inputs(plan_path, images_dir)
+    output_dir = _safe_output_dir(output_dir)
+    work = output_dir / "work"
+    cache = output_dir / "audio-cache"
+    work.mkdir()
+    cache.mkdir()
+    contact_sheet = output_dir / "contact-sheet.jpg"
+    make_contact_sheet(plan, images, contact_sheet)
+
+    narrator = Narrator(voice, speed)
+    audio_rows = []
+    for index, scene in enumerate(plan["scenes"], 1):
+        print(f"Narrating scene {index}/{len(plan['scenes'])}: {scene['title']}")
+        audio_rows.append(narrator.synthesize(scene["narration"], cache))
+
+    total_speech = sum(float(row["duration"]) for row in audio_rows)
+    expected_total = INTRO_SECONDS + total_speech + 0.08 * (len(audio_rows) - 1)
+    if not TARGET_MIN <= expected_total <= TARGET_MAX:
+        # One measured correction pass keeps the cut inside the requested short-form duration.
+        corrected_speed = max(0.78, min(1.25, speed * expected_total / 52.0))
+        if abs(corrected_speed - speed) < 0.015:
+            raise ValueError(f"Kokoro narration duration {expected_total:.2f}s does not fit the 45–60s target")
+        print(f"Adjusting Kokoro speed from {speed:.2f} to {corrected_speed:.2f} to meet the runtime target")
+        narrator = Narrator(voice, corrected_speed)
+        audio_rows = [narrator.synthesize(scene["narration"], cache) for scene in plan["scenes"]]
+        total_speech = sum(float(row["duration"]) for row in audio_rows)
+        expected_total = INTRO_SECONDS + total_speech + 0.08 * (len(audio_rows) - 1)
+        speed = corrected_speed
+        if not TARGET_MIN <= expected_total <= TARGET_MAX:
+            raise ValueError(f"Adjusted narration duration {expected_total:.2f}s remains outside the 45–60s target")
+
+    entries = []
+    cursor = INTRO_SECONDS
+    for row in audio_rows:
+        duration = float(row["duration"])
+        entries.append({"start": cursor, "duration": duration})
+        cursor += duration + 0.08
+    total = expected_total
+
+    events = write_narration(work / "narration.wav", audio_rows, total, INTRO_SECONDS)
+    ambient_path = work / "ambient.wav"
+    make_ambient(ambient_path, total)
+
+    canvases = [_prepare_canvas(image) for image in images]
+    intro = _intro_frame(images[0], plan["title"])
+
+    def frame(t: float):
+        if t < INTRO_SECONDS:
+            return np.asarray(intro)
+        scene_index = len(entries) - 1
+        for i, entry in enumerate(entries):
+            if t < entry["start"] + entry["duration"]:
+                scene_index = i
+                break
+        entry = entries[scene_index]
+        progress = (t - entry["start"]) / max(0.01, entry["duration"])
+        current = _scene_frame(canvases[scene_index], progress)
+        remaining = entry["start"] + entry["duration"] - t
+        if scene_index + 1 < len(canvases) and 0 <= remaining < CROSSFADE_SECONDS:
+            alpha = 1.0 - remaining / CROSSFADE_SECONDS
+            next_image = _scene_frame(canvases[scene_index + 1], 0.02)
+            current = Image.blend(current, next_image, max(0.0, min(1.0, alpha)))
+        return np.asarray(current)
+
+    clip = VideoClip(frame, duration=total)
+    silent_path = work / "silent.mp4"
+    try:
+        clip.write_videofile(
+            str(silent_path), fps=FPS, codec="libx264", audio=False,
+            preset="veryfast", threads=2, logger=None,
+            ffmpeg_params=["-crf", "21", "-pix_fmt", "yuv420p"],
+        )
+    finally:
+        clip.close()
+
+    narration_events = [{"start": event["start"], "words": event["words"]} for event in events]
+    ass_path = work / "captions.ass"
+    ass_path.write_text(build_ass(narration_events, (WIDTH, HEIGHT), karaoke=True), encoding="utf-8")
+    audio_video = output_dir / "video.mp4"
+    mix_filter = (
+        "[0:a]volume=1.0[narr];[1:a]volume=0.22[bed];"
+        "[narr][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+        "alimiter=limit=0.95[mixed]"
+    )
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-i", str(silent_path), "-i", str(work / "narration.wav"), "-i", str(ambient_path),
+            "-filter_complex", mix_filter,
+            "-vf", f"subtitles={ass_path.as_posix()}",
+            "-map", "0:v:0", "-map", "[mixed]",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-threads", "2",
+            "-c:a", "aac", "-b:a", "160k", "-ar", str(RATE),
+            "-t", f"{total:.3f}", "-movflags", "+faststart", str(audio_video),
+        ],
+        capture_output=True, text=True, timeout=5400,
+    )
+    if result.returncode:
+        raise RuntimeError("Final FFmpeg mux failed: " + result.stderr[-2500:])
+
+    probe = _probe(audio_video)
+    # Sidecar SRT lets the captions be read with players that support subtitle tracks.
+    srt_blocks, srt_index = [], 1
+    for event in narration_events:
+        words = event["words"]
+        for start in range(0, len(words), 5):
+            group = words[start:start + 5]
+            begin = event["start"] + group[0]["start"]
+            end = event["start"] + group[-1]["end"]
+            def stamp(value):
+                ms = round(value * 1000)
+                h, ms = divmod(ms, 3600000)
+                m, ms = divmod(ms, 60000)
+                sec, ms = divmod(ms, 1000)
+                return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+            srt_blocks.append(f"{srt_index}\n{stamp(begin)} --> {stamp(end)}\n{' '.join(w['word'] for w in group)}\n")
+            srt_index += 1
+    (output_dir / "captions.srt").write_text("\n".join(srt_blocks), encoding="utf-8")
+
+    metadata = {
+        "title": plan["title"],
+        "series": plan.get("series"),
+        "model_strategy": generation_manifest.get("model_strategy", {}),
+        "scene_count": len(images),
+        "duration_seconds": probe["duration_seconds"],
+        "resolution": f"{WIDTH}x{HEIGHT}",
+        "fps": FPS,
+        "narration": "Kokoro CPU TTS",
+        "voice": voice,
+        "voice_speed": speed,
+        "music": "original procedural low ambient drone",
+        "captions": "burned-in karaoke-style plus SRT sidecar",
+        "transitions": f"{CROSSFADE_SECONDS:.2f}s crossfades",
+        "image_manifest": str((images_dir / "generation-manifest.json").name),
+        "preview_only": True,
+        "approved": False,
+        "published": False,
+        "rendered_for_review": True,
+        "fact_check_status": "requires human review before publication",
+        "asset_review_status": "generated assets require human review before publication",
+    }
+    write_json(output_dir / "render-metadata.json", metadata)
+    (output_dir / "PREVIEW-ONLY.txt").write_text(
+        "PRIVATE REVIEW PREVIEW — NOT APPROVED FOR PUBLICATION.\n"
+        "All generated scene images and factual narration require human review.\n",
+        encoding="utf-8",
+    )
+    (output_dir / "description.txt").write_text(
+        plan["title"] + "\n\n" + plan["narration"] + "\n\n"
+        "PREVIEW ONLY — do not publish or distribute as a final factual episode.\n",
+        encoding="utf-8",
+    )
+    print(f"Preview MP4 created: {audio_video} ({probe['duration_seconds']:.2f}s)")
+    return audio_video, metadata
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--images", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--voice", choices=("bm_george", "bm_fable", "am_michael"), default="bm_george")
+    parser.add_argument("--speed", type=float, default=1.0)
+    args = parser.parse_args()
+    video, _ = render(args.plan, args.images, args.out, args.voice, args.speed)
+    print(f"Review-only video: {video}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
