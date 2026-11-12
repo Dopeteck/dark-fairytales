@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "destination-prototype"))
-from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _chapter_frame
+from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _chapter_frame, _scene_entries, write_continuous_narration
 
 
 class FairytaleVideoInputTests(unittest.TestCase):
@@ -70,7 +70,51 @@ class FairytaleVideoInputTests(unittest.TestCase):
         ])
         self.assertIn("Rumpelstiltskin!", plan["scenes"][-1]["narration"])
         self.assertEqual(plan["narration"], " ".join(scene["narration"] for scene in plan["scenes"]))
-        self.assertTrue(120 <= len(plan["narration"].split()) <= 140)
+        self.assertTrue(150 <= len(plan["narration"].split()) <= 235)
+        self.assertIn("For two days", plan["narration"])
+        self.assertIn("On the third day", plan["narration"])
+        self.assertIn("forest's edge", plan["narration"])
+        self.assertIn("wrench it free", plan["narration"])
+
+    def test_scene_entries_split_one_continuous_story_track(self):
+        from captions import word_timings
+        words = word_timings(self.plan["narration"], 90.0)
+        entries = _scene_entries(self.plan["scenes"], words, 1.6)
+        self.assertEqual(len(entries), 9)
+        self.assertAlmostEqual(entries[0]["start"], 1.6, places=3)
+        final_end = entries[-1]["start"] + entries[-1]["duration"]
+        self.assertAlmostEqual(final_end, 91.6, places=2)
+        for previous, current in zip(entries, entries[1:]):
+            self.assertAlmostEqual(
+                current["start"],
+                previous["start"] + previous["duration"],
+                places=3,
+            )
+
+    def test_continuous_narration_writer_adds_intro_once_and_no_scene_gaps(self):
+        from captions import word_timings
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "speech.wav"
+            destination = root / "continuous.wav"
+            with wave.open(str(source), "wb") as audio:
+                audio.setnchannels(1)
+                audio.setsampwidth(2)
+                audio.setframerate(24000)
+                audio.writeframes(b"\\0\\0" * 24000)
+            text = "Once a miller made a foolish promise."
+            row = {
+                "path": str(source),
+                "duration": 1.0,
+                "words": word_timings(text, 1.0),
+            }
+            events = write_continuous_narration(destination, row, 1.5, 0.5)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["start"], 0.5)
+            self.assertEqual(len(events[0]["words"]), len(text.split()))
+            with wave.open(str(destination), "rb") as audio:
+                self.assertEqual(audio.getnframes(), round(1.5 * 24000))
+                self.assertEqual(audio.getframerate(), 24000)
 
     def test_ffmpeg_mix_reads_narration_and_ambient_from_correct_inputs(self):
         mix = _audio_mix_filter()
