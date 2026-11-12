@@ -145,7 +145,7 @@ def assemble(plan_path: Path, images_dir: Path, identity_reference: Path, scale_
             "format": fmt,
             "bytes": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
-            "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "prompt_sha256": prompt_hash,
             "model": model_id,
             "preferred_model": model_id,
             "model_fallback_used": False,
