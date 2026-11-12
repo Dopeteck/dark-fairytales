@@ -12,11 +12,18 @@ import json
 import math
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import wave
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PROTOTYPE_DIR = Path(__file__).resolve().parent
+for import_path in (str(REPO_ROOT), str(PROTOTYPE_DIR)):
+    if import_path not in sys.path:
+        sys.path.insert(0, import_path)
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
