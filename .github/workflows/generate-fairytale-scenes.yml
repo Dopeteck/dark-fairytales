@@ -45,9 +45,9 @@ jobs:
       - name: Download previously generated character reference source
         uses: actions/download-artifact@v4
         with:
-          name: rumpelstiltskin-generated-scenes-43233983215
+          name: rumpelstiltskin-reference-pilot-43235607000
           path: output/reference-source
-          run-id: 43233983215
+          run-id: 43235607000
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Prepare 512px Rumpelstiltskin character reference
@@ -56,7 +56,7 @@ jobs:
           from pathlib import Path
           from PIL import Image
 
-          source = Path("output/reference-source/03-beat-03-first-bargains.jpg")
+          source = Path("output/reference-source/rumpelstiltskin-reference-pilot/01-beat-05-child-pact.jpg")
           if not source.is_file():
               raise SystemExit(f"Missing character reference source: {source}")
           out = Path("output/character-reference/rumpelstiltskin.png")
@@ -64,8 +64,8 @@ jobs:
           with Image.open(source) as original:
               image = original.convert("RGB")
               # Isolate the full dwarf, including his cap, beard, costume and shoes.
-              crop = image.crop((30, 20, 470, 1015))
-              crop.thumbnail((250, 512), Image.Resampling.LANCZOS)
+              crop = image.crop((505, 520, 832, 1435))
+              crop.thumbnail((220, 512), Image.Resampling.LANCZOS)
               canvas = Image.new("RGB", (512, 512), (95, 91, 84))
               canvas.paste(crop, ((512 - crop.width) // 2, (512 - crop.height) // 2))
               canvas.save(out, format="PNG")
