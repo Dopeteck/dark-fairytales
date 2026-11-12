@@ -79,27 +79,29 @@ jobs:
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
-          name: rumpelstiltskin-full-video-review-43253052465
+          name: rumpelstiltskin-full-video-review-43257656152
           path: output/partial-source
-          run-id: 43253052465
+          run-id: 43257656152
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Reuse already generated scenes
+      - name: Reuse generated scenes and original generation manifest
         run: |
           python - <<'PY'
           from pathlib import Path
           import shutil
+
           source = Path("output/partial-source/rumpelstiltskin-generated-scenes")
           destination = Path("output/rumpelstiltskin-generated-scenes")
           destination.mkdir(parents=True, exist_ok=True)
-          if source.is_dir():
-              for path in sorted(source.iterdir()):
-                  if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
-                      target = destination / path.name
-                      if not target.exists():
-                          shutil.copy2(path, target)
-                          print(f"Restored partial scene: {path.name}")
-          print("Partial scenes available:", len(list(destination.glob("*.jpg"))) + len(list(destination.glob("*.jpeg"))) + len(list(destination.glob("*.png"))) + len(list(destination.glob("*.webp"))))
+          if not source.is_dir():
+              raise SystemExit(f"Missing saved scene directory: {source}")
+          for path in sorted(source.iterdir()):
+              if not path.is_file():
+                  continue
+              if path.name == "generation-manifest.json" or path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+                  shutil.copy2(path, destination / path.name)
+                  print(f"Restored: {path.name}")
+          print("Restored files:", len(list(destination.iterdir())))
           PY
 
       - name: Run image-generation tests and compile both pipelines
