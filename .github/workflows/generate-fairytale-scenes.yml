@@ -8,15 +8,16 @@ on:
       - "dispatch/generate-fairytale-scenes.txt"
   workflow_dispatch:
     inputs:
-      steps:
-        description: "FLUX.1 schnell inference steps"
+      scene:
+        description: "Scene to generate for the reference-image pilot"
         type: choice
-        options: ["4", "6", "8"]
-        default: "8"
+        options: ["beat-05-child-pact", "all-character-scenes"]
+        default: "beat-05-child-pact"
         required: true
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: fairytale-scene-generation-${{ github.ref }}
@@ -32,16 +33,50 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: feature/dark-folklore-shorts
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install image generation dependencies
         run: python -m pip install "requests>=2.31" "Pillow>=10"
-      - name: Test prompts and FLUX request schema
+
+      - name: Download previously generated character reference source
+        uses: actions/download-artifact@v4
+        with:
+          name: rumpelstiltskin-generated-scenes-43233983215
+          path: output/reference-source
+          run-id: 43233983215
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare 512px Rumpelstiltskin character reference
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          source = Path("output/reference-source/03-beat-03-first-bargains.jpg")
+          if not source.is_file():
+              raise SystemExit(f"Missing character reference source: {source}")
+          out = Path("output/character-reference/rumpelstiltskin.png")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          with Image.open(source) as original:
+              image = original.convert("RGB")
+              # Isolate the full dwarf, including his cap, beard, costume and shoes.
+              crop = image.crop((30, 20, 470, 1015))
+              crop.thumbnail((250, 512), Image.Resampling.LANCZOS)
+              canvas = Image.new("RGB", (512, 512), (95, 91, 84))
+              canvas.paste(crop, ((512 - crop.width) // 2, (512 - crop.height) // 2))
+              canvas.save(out, format="PNG")
+          print(f"Prepared character reference: {out} ({out.stat().st_size} bytes)")
+          PY
+
+      - name: Test prompts and multi-reference FLUX request schema
         run: |
           python -m unittest discover -s tests -p "test_generate_fairytale_scenes.py" -v
           python -m py_compile destination-prototype/generate_fairytale_scenes.py
+
       - name: Check Cloudflare credentials
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -49,20 +84,37 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "::error::Missing repository secret CLOUDFLARE_ACCOUNT_ID"; exit 1)
           test -n "$CLOUDFLARE_API_TOKEN" || (echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN"; exit 1)
-      - name: Generate nine review-only scene images
+
+      - name: Generate reference-conditioned child-pact pilot
+        if: github.event_name == 'push' || inputs.scene == 'beat-05-child-pact'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           python destination-prototype/generate_fairytale_scenes.py \
             --plan research/rumpelstiltskin-pilot.json \
-            --output output/rumpelstiltskin-generated-scenes \
-            --steps "${{ inputs.steps || '8' }}"
-      - name: Upload unapproved scene artwork
+            --reference-image output/character-reference/rumpelstiltskin.png \
+            --only-scene beat-05-child-pact \
+            --output output/rumpelstiltskin-reference-pilot
+
+      - name: Generate all five character scenes
+        if: github.event_name == 'workflow_dispatch' && inputs.scene == 'all-character-scenes'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python destination-prototype/generate_fairytale_scenes.py \
+            --plan research/rumpelstiltskin-pilot.json \
+            --reference-image output/character-reference/rumpelstiltskin.png \
+            --output output/rumpelstiltskin-reference-pilot
+
+      - name: Upload unapproved reference-conditioned artwork
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rumpelstiltskin-generated-scenes-${{ github.run_id }}
-          path: output/rumpelstiltskin-generated-scenes/
+          name: rumpelstiltskin-reference-pilot-${{ github.run_id }}
+          path: |
+            output/character-reference/
+            output/rumpelstiltskin-reference-pilot/
           if-no-files-found: warn
           retention-days: 14
