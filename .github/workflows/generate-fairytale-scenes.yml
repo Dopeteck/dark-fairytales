@@ -12,7 +12,7 @@ on:
         description: "FLUX.1 schnell inference steps"
         type: choice
         options: ["4", "6", "8"]
-        default: "4"
+        default: "8"
         required: true
 
 permissions:
@@ -57,7 +57,7 @@ jobs:
           python destination-prototype/generate_fairytale_scenes.py \
             --plan research/rumpelstiltskin-pilot.json \
             --output output/rumpelstiltskin-generated-scenes \
-            --steps "${{ inputs.steps || '4' }}"
+            --steps "${{ inputs.steps || '8' }}"
       - name: Upload unapproved scene artwork
         if: always()
         uses: actions/upload-artifact@v4
