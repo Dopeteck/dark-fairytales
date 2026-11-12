@@ -38,6 +38,7 @@ FPS = 30
 WIDTH, HEIGHT = 1080, 1920
 INTRO_SECONDS = 1.6
 CROSSFADE_SECONDS = 0.38
+INTER_SCENE_GAP = 0.16
 TARGET_MIN, TARGET_MAX = 45.0, 60.0
 
 
@@ -111,7 +112,7 @@ def make_contact_sheet(plan: dict, images: list[Image.Image], path: Path) -> Non
         x, y = (i % 3) * thumb_w, (i // 3) * thumb_h
         sheet.paste(thumb, (x, y))
         draw.rectangle((x, y + thumb_h - 48, x + thumb_w, y + thumb_h), fill=(0, 0, 0))
-        label = f"{i + 1}. {scene['title']}"[:38]
+        label = f"{i + 1}. {scene.get('chapter', scene['title'])}"[:38]
         draw.text((x + 8, y + thumb_h - 37), label, font=_font(14), fill="white")
     sheet.save(path, quality=92)
 
@@ -138,6 +139,43 @@ def _scene_frame(canvas: Image.Image, progress: float) -> Image.Image:
     return canvas.crop((left, top, left + crop_w, top + crop_h)).resize(
         (WIDTH, HEIGHT), Image.Resampling.LANCZOS
     )
+
+
+def _chapter_frame(frame: Image.Image, label: str, index: int) -> Image.Image:
+    """Add a concise chapter marker so viewers can track each story beat."""
+    base = frame.convert("RGBA")
+    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    left, top, right, bottom = 56, 92, WIDTH - 56, 236
+    draw.rounded_rectangle(
+        (left, top, right, bottom),
+        radius=28,
+        fill=(5, 9, 14, 188),
+        outline=(198, 158, 83, 220),
+        width=3,
+    )
+    draw.text(
+        (left + 30, top + 22),
+        f"CHAPTER {index:02d}",
+        font=_font(23),
+        fill=(226, 190, 117, 255),
+    )
+    title_font = _font(39)
+    text = label.upper()
+    max_width = right - left - 60
+    while text and draw.textbbox((0, 0), text, font=title_font)[2] > max_width:
+        title_font = _font(max(27, title_font.size - 2))
+        if title_font.size == 27:
+            break
+    draw.text(
+        (left + 30, top + 66),
+        text,
+        font=title_font,
+        fill=(255, 248, 232, 255),
+        stroke_width=1,
+        stroke_fill=(0, 0, 0, 150),
+    )
+    return Image.alpha_composite(base, overlay).convert("RGB")
 
 
 def _intro_frame(image: Image.Image, title: str) -> Image.Image:
@@ -223,7 +261,7 @@ def write_narration(path: Path, audio_rows: list[dict], total_seconds: float, in
             events.append({"start": cursor, "words": row["words"]})
             cursor += seconds
             if index < len(audio_rows) - 1:
-                gap = round(0.08 * RATE)
+                gap = round(INTER_SCENE_GAP * RATE)
                 out.writeframes(b"\0\0" * gap)
                 cursor += gap / RATE
         remaining = max(0, round(total_seconds * RATE) - round(cursor * RATE))
@@ -282,7 +320,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         audio_rows.append(narrator.synthesize(scene["narration"], cache))
 
     total_speech = sum(float(row["duration"]) for row in audio_rows)
-    expected_total = INTRO_SECONDS + total_speech + 0.08 * (len(audio_rows) - 1)
+    expected_total = INTRO_SECONDS + total_speech + INTER_SCENE_GAP * (len(audio_rows) - 1)
     if not TARGET_MIN <= expected_total <= TARGET_MAX:
         # One measured correction pass keeps the cut inside the requested short-form duration.
         corrected_speed = max(0.78, min(1.25, speed * expected_total / 52.0))
@@ -302,7 +340,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     for row in audio_rows:
         duration = float(row["duration"])
         entries.append({"start": cursor, "duration": duration})
-        cursor += duration + 0.08
+        cursor += duration + INTER_SCENE_GAP
     total = expected_total
 
     events = write_narration(work / "narration.wav", audio_rows, total, INTRO_SECONDS)
@@ -328,6 +366,8 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
             alpha = 1.0 - remaining / CROSSFADE_SECONDS
             next_image = _scene_frame(canvases[scene_index + 1], 0.02)
             current = Image.blend(current, next_image, max(0.0, min(1.0, alpha)))
+        chapter = plan["scenes"][scene_index].get("chapter", plan["scenes"][scene_index]["title"])
+        current = _chapter_frame(current, chapter, scene_index + 1)
         return np.asarray(current)
 
     clip = VideoClip(frame, duration=total)
