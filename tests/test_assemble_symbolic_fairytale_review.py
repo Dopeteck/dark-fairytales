@@ -53,7 +53,7 @@ class SymbolicFairytaleReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             images, identity, scale = self._make_inputs(root)
-            (images / "02-beat-02-boast.jpg").unlink()
+            next(images.glob("*-beat-02-boast.jpg")).unlink()
             with self.assertRaisesRegex(ValueError, "Missing existing generated scene"):
                 assemble(self.plan_path, images, identity, scale)
 
