@@ -2,6 +2,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 
 from PIL import Image
@@ -10,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "destination-prototype"))
-from render_fairytale_video import load_inputs, make_contact_sheet
+from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient
 
 
 class FairytaleVideoInputTests(unittest.TestCase):
@@ -45,6 +46,16 @@ class FairytaleVideoInputTests(unittest.TestCase):
         (folder / "generation-manifest.json").write_text(
             json.dumps(manifest), encoding="utf-8"
         )
+
+    def test_ambient_audio_fade_uses_integer_slice_bounds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ambient.wav"
+            make_ambient(path, 0.8)
+            with wave.open(str(path), "rb") as audio:
+                self.assertEqual(audio.getnchannels(), 1)
+                self.assertEqual(audio.getsampwidth(), 2)
+                self.assertGreater(audio.getframerate(), 0)
+                self.assertGreater(audio.getnframes(), 0)
 
     def test_requires_all_nine_generated_images_and_checksums(self):
         with tempfile.TemporaryDirectory() as tmp:
