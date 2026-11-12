@@ -9,7 +9,8 @@ from PIL import Image
 import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from destination_prototype.render_fairytale_video import load_inputs, make_contact_sheet
+sys.path.insert(0, str(ROOT / "destination-prototype"))
+from render_fairytale_video import load_inputs, make_contact_sheet
 
 
 class FairytaleVideoInputTests(unittest.TestCase):
