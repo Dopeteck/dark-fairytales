@@ -45,13 +45,13 @@ class GeneratorTests(unittest.TestCase):
             "reaches ONLY her hip",
             "2.5 times taller",
             "full-body",
-            "short bowed bandy legs",
+            "tiny bowed bandy legs",
             "long white beard",
             "bulbous fiery-red nose",
             "tall red pointed cap",
             "deep-blue tunic",
             "ochre breeches",
-            "NOT a woman",
+            "never a woman",
             "NOT a child",
         ):
             self.assertIn(required, prompt)
@@ -60,7 +60,7 @@ class GeneratorTests(unittest.TestCase):
     def test_character_lock_is_only_added_to_scenes_where_he_appears(self):
         queen_scene = {"id": "beat-07-three-days", "title": "Three days to name him"}
         prompt = generator.build_prompt(queen_scene, 7)
-        self.assertNotIn("RUMPELSTILTSKIN MUST BE TINY", prompt)
+        self.assertNotIn("RUMPELSTILTSKIN: tiny", prompt)
         self.assertNotIn("2.5 times taller", prompt)
 
     def test_every_character_appearance_uses_the_same_scale_and_costume_lock(self):
