@@ -39,10 +39,12 @@ RUMPELSTILTSKIN_CHARACTER_LOCK = (
     "CHARACTER REFERENCE: input image 0 is Rumpelstiltskin. Recreate the SAME character "
     "from that reference: same elderly male face, large fiery-red nose, long white beard "
     "and moustache, pointed red cap, red cloak, blue tunic, ochre breeches and curled "
-    "shoes. Do not copy the reference background or pose. He is a tiny 60-centimetre "
-    "adult male folkloric dwarf, not a normal-sized man. Beside an adult woman 165 cm "
-    "tall, his cap reaches only her hip. Make this size difference unmistakable. Show "
-    "his complete body from hat to shoes, including both short bowed legs. He is never "
+    "shoes. Do not copy the reference background or pose. He is a truly tiny 60-centimetre "
+    "adult male folkloric dwarf, only about 40 percent of an adult woman's height. "
+    "Beside an adult woman 165 cm tall, the top of his cap reaches no higher than her "
+    "KNEECAP, never her waist or chest. This very large height difference is essential. "
+    "Show both complete bodies from head to shoes on the same floor, with his short bowed "
+    "legs visible. He is never "
     "a woman, girl, child, tall man or anonymous hooded figure. Never hide his legs."
 )
 
@@ -97,7 +99,8 @@ SCENE_VISUALS = {
     ),
     "beat-08-forest-fire": (
         "A single tiny male dwarf, Rumpelstiltskin, dances alone beside a small forest fire "
-        "and crooked woodland hut. Show exactly ONE person: no other people, no second dwarf, "
+        "and crooked woodland hut. His cap reaches only about one-third of the hut door height. "
+        "Show exactly ONE person: no other people, no second dwarf, "
         "no female goblin. His whole 60-centimetre body is visible head to shoes, with short "
         "bowed legs and curled shoes; use the hut door for scale. Moonlit trees and drifting sparks."
     ),
