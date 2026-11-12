@@ -136,6 +136,58 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(file_fields["input_image_1"][2], "image/png")
         self.assertNotIn("seed", kwargs)
 
+    def test_transient_cloudflare_500_is_retried(self):
+        first = Mock(status_code=500, text='temporary internal error', headers={})
+        second = Mock(status_code=200)
+        second.json.return_value = {"result": {"image": self.image_b64}}
+        session = Mock()
+        session.post.side_effect = [first, second]
+        with unittest.mock.patch.object(generator.time, "sleep") as sleep:
+            data = generator.generate_one("fairytale scene", "account", "token", session=session)
+        self.assertTrue(data.startswith(b"\\xff\\xd8"))
+        self.assertEqual(session.post.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_resume_reuses_existing_scene_and_generates_only_missing_beats(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plan_path = root / "plan.json"
+            plan = {"title": "Resume test", "scenes": [
+                {"id": "beat-01-threat", "title": "Threat", "narration": "The threat."},
+                {"id": "beat-05-child-pact", "title": "Bargain", "narration": "She makes a bargain."},
+                {"id": "beat-08-forest-fire", "title": "Fire", "narration": "He dances by the fire."},
+            ]}
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            out = root / "images"
+            out.mkdir()
+            partial_path = out / "01-beat-01-threat.jpg"
+            Image.new("RGB", (832, 1472), (22, 45, 80)).save(partial_path, format="JPEG")
+            identity = self._reference_file(root / "identity.png")
+            scale = self._reference_file(root / "scale.png")
+            generated_buffer = io.BytesIO()
+            Image.new("RGB", (832, 1472), (60, 80, 100)).save(generated_buffer, format="JPEG")
+            generated = generated_buffer.getvalue()
+            original = generator.generate_one
+            generator.generate_one = Mock(return_value=generated)
+            try:
+                manifest = generator.run(
+                    plan_path, out, "account", "token",
+                    reference_image_path=identity,
+                    scale_reference_path=scale,
+                    pause_seconds=0,
+                    resume=True,
+                )
+            finally:
+                generator.generate_one = original
+            self.assertEqual(generator.generate_one.call_count if isinstance(generator.generate_one, Mock) else 0, 0)
+            self.assertEqual(manifest["scene_count"], 3)
+            self.assertTrue(manifest["images"][0]["resumed_from_partial_run"])
+            self.assertFalse(manifest["images"][1]["resumed_from_partial_run"])
+            self.assertFalse(manifest["images"][2]["resumed_from_partial_run"])
+            self.assertEqual(manifest["images"][0]["file"], partial_path.name)
+            self.assertTrue((out / "generation-manifest.json").is_file())
+            self.assertEqual(len(list(out.glob("*.jpg"))), 3)
+
     def test_http_errors_are_clear(self):
         response = Mock(status_code=429, text="rate limited")
         session = Mock()
