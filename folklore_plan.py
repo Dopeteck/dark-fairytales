@@ -41,11 +41,11 @@ def validate_folklore_plan(data: dict[str, Any]) -> dict[str, Any]:
         if scene.get("duration_seconds", 0) <= 0:
             raise ValueError(f"{sid} needs a positive target duration")
     words = len(str(data.get("narration", "")).split())
-    if not 120 <= words <= 140:
-        raise ValueError(f"narration has {words} words; expected 120–140")
+    if not 150 <= words <= 235:
+        raise ValueError(f"narration has {words} words; expected 150–235 for a complete story")
     if " ".join(scene["narration"].strip() for scene in scenes) != data["narration"].strip():
         raise ValueError("beat narration must join exactly to the master script")
     total = sum(float(scene["duration_seconds"]) for scene in scenes)
-    if not 45 <= total <= 60:
-        raise ValueError(f"beat target durations total {total:.1f}s; expected 45–60s")
+    if not 70 <= total <= 110:
+        raise ValueError(f"beat target durations total {total:.1f}s; expected 70–110s for a complete story")
     return {**data, "narration_word_count": words, "target_duration_seconds": total}
