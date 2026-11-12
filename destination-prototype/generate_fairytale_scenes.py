@@ -20,7 +20,7 @@ from typing import Any
 import requests
 from PIL import Image
 
-MODEL_ID = "@cf/black-forest-labs/flux-2-klein-4b"
+MODEL_ID = "@cf/black-forest-labs/flux-2-klein-9b"
 API_ROOT = "https://api.cloudflare.com/client/v4/accounts"
 OUTPUT_WIDTH = 832
 OUTPUT_HEIGHT = 1472
