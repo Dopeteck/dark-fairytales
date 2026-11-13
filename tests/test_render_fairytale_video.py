@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "destination-prototype"))
-from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _chapter_frame, _scene_entries, _story_word_timings_by_scene, write_continuous_narration
+from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _chapter_frame, _scene_entries, _story_word_timings_by_scene, _build_story_text, _build_srt, write_continuous_narration
 
 
 class FairytaleVideoInputTests(unittest.TestCase):
@@ -75,6 +75,29 @@ class FairytaleVideoInputTests(unittest.TestCase):
         self.assertIn("On the third day", plan["narration"])
         self.assertIn("forest's edge", plan["narration"])
         self.assertIn("wrench it free", plan["narration"])
+
+    def test_story_text_uses_real_paragraph_breaks_and_preserves_all_words(self):
+        story_text = _build_story_text(self.plan["scenes"])
+        expected_words = sum(len(scene["narration"].split()) for scene in self.plan["scenes"])
+        self.assertEqual(len(story_text.split()), expected_words)
+        self.assertIn("\\n\\n", story_text)
+        self.assertNotIn("\\\\n", story_text)
+        self.assertEqual(story_text, "\\n\\n".join(scene["narration"].strip() for scene in self.plan["scenes"]))
+
+    def test_srt_sidecar_uses_real_line_breaks(self):
+        events = [{
+            "start": 1.6,
+            "words": [
+                {"word": "Once", "start": 0.0, "end": 0.3},
+                {"word": "upon", "start": 0.3, "end": 0.6},
+                {"word": "a", "start": 0.6, "end": 0.7},
+                {"word": "time.", "start": 0.7, "end": 1.0},
+            ],
+        }]
+        srt = _build_srt(events)
+        self.assertIn("1\\n00:00:01,600 --> 00:00:02,600\\nOnce upon a time.", srt)
+        self.assertNotIn("\\\\n", srt)
+        self.assertTrue(srt.endswith("\\n"))
 
     def test_authored_script_timing_preserves_every_word(self):
         script_words = [token for scene in self.plan["scenes"] for token in scene["narration"].split()]
