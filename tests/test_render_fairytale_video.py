@@ -92,8 +92,7 @@ class FairytaleVideoInputTests(unittest.TestCase):
         self.assertAlmostEqual(entries[-1]["start"] + entries[-1]["duration"], 91.6, places=2)
 
     def test_scene_entries_split_one_continuous_story_track(self):
-        from captions import word_timings
-        words = word_timings(self.plan["narration"], 90.0)
+        words = _story_word_timings_by_scene(self.plan["scenes"], 90.0)
         entries = _scene_entries(self.plan["scenes"], words, 1.6)
         self.assertEqual(len(entries), 9)
         self.assertAlmostEqual(entries[0]["start"], 1.6, places=3)
@@ -105,6 +104,18 @@ class FairytaleVideoInputTests(unittest.TestCase):
                 previous["start"] + previous["duration"],
                 places=3,
             )
+
+    def test_scene_timing_keeps_all_authored_words_attached_to_their_beat(self):
+        words = _story_word_timings_by_scene(self.plan["scenes"], 92.0)
+        self.assertEqual(len(words), sum(len(scene["narration"].split()) for scene in self.plan["scenes"]))
+        self.assertEqual(
+            [word["scene_id"] for word in words if word["scene_id"] != words[0]["scene_id"]][0],
+            self.plan["scenes"][1]["id"],
+        )
+        entries = _scene_entries(self.plan["scenes"], words, 1.6)
+        self.assertEqual(len(entries), 9)
+        self.assertAlmostEqual(entries[0]["start"], 1.6, places=3)
+        self.assertAlmostEqual(entries[-1]["start"] + entries[-1]["duration"], 93.6, places=2)
 
     def test_continuous_narration_writer_adds_intro_once_and_no_scene_gaps(self):
         from captions import word_timings
