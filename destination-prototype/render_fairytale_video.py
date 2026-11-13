@@ -292,6 +292,35 @@ def _scene_entries(scenes: list[dict], words: list[dict], intro_seconds: float) 
     return entries
 
 
+def _build_story_text(scenes: list[dict]) -> str:
+    """Join authored beats with real paragraph breaks for natural TTS phrasing."""
+    return "\n\n".join(str(scene["narration"]).strip() for scene in scenes)
+
+
+def _build_srt(events: list[dict]) -> str:
+    """Create a standards-compliant SRT sidecar with real line endings."""
+    blocks = []
+    index = 1
+
+    def stamp(value: float) -> str:
+        milliseconds = round(value * 1000)
+        hours, milliseconds = divmod(milliseconds, 3_600_000)
+        minutes, milliseconds = divmod(milliseconds, 60_000)
+        seconds, milliseconds = divmod(milliseconds, 1000)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+    for event in events:
+        words = event["words"]
+        for start in range(0, len(words), 5):
+            group = words[start:start + 5]
+            begin = float(event["start"]) + float(group[0]["start"])
+            end = float(event["start"]) + float(group[-1]["end"])
+            text = " ".join(str(word["word"]) for word in group)
+            blocks.append(f"{index}\n{stamp(begin)} --> {stamp(end)}\n{text}")
+            index += 1
+    return "\n\n".join(blocks) + "\n"
+
+
 def write_continuous_narration(
     path: Path,
     audio_row: dict,
@@ -366,7 +395,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
 
     # One full-script synthesis gives Kokoro the whole narrative arc instead of
     # resetting voice/prosody at every still-image boundary.
-    story_text = "\\n\\n".join(scene["narration"].strip() for scene in plan["scenes"])
+    story_text = "\n\n".join(scene["narration"].strip() for scene in plan["scenes"])
     narrator = Narrator(voice, speed)
     print(f"Narrating the complete {len(plan['scenes'])}-beat story in one continuous pass")
     narration_row = narrator.synthesize(story_text, cache)
@@ -460,22 +489,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
 
     probe = _probe(audio_video)
     # Sidecar SRT uses the timings for the single continuous narration take.
-    srt_blocks, srt_index = [], 1
-    for event in narration_events:
-        words = event["words"]
-        for start in range(0, len(words), 5):
-            group = words[start:start + 5]
-            begin = event["start"] + group[0]["start"]
-            end = event["start"] + group[-1]["end"]
-            def stamp(value):
-                ms = round(value * 1000)
-                h, ms = divmod(ms, 3600000)
-                m, ms = divmod(ms, 60000)
-                sec, ms = divmod(ms, 1000)
-                return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
-            srt_blocks.append(f"{srt_index}\\n{stamp(begin)} --> {stamp(end)}\\n{' '.join(w['word'] for w in group)}\\n")
-            srt_index += 1
-    (output_dir / "captions.srt").write_text("\\n".join(srt_blocks), encoding="utf-8")
+    (output_dir / "captions.srt").write_text(_build_srt(narration_events), encoding="utf-8")
 
     metadata = {
         "title": plan["title"],
@@ -504,17 +518,17 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     }
     write_json(output_dir / "render-metadata.json", metadata)
     (output_dir / "PREVIEW-ONLY.txt").write_text(
-        "PRIVATE REVIEW PREVIEW — NOT APPROVED FOR PUBLICATION.\\n"
-        "All generated scene images and factual narration require human review.\\n",
+        "PRIVATE REVIEW PREVIEW — NOT APPROVED FOR PUBLICATION.\n"
+        "All generated scene images and factual narration require human review.\n",
         encoding="utf-8",
     )
     description = (
-        plan["title"] + "\\n\\n" + plan["narration"] + "\\n\\n"
-        "PREVIEW ONLY — do not publish or distribute as a final factual episode.\\n"
+        plan["title"] + "\n\n" + plan["narration"] + "\n\n"
+        "PREVIEW ONLY — do not publish or distribute as a final factual episode.\n"
     )
     symbolic_note = generation_manifest.get("symbolic_final_scene_note")
     if symbolic_note:
-        description += "\\nVISUAL NOTE: " + symbolic_note + "\\n"
+        description += "\nVISUAL NOTE: " + symbolic_note + "\n"
     (output_dir / "description.txt").write_text(description, encoding="utf-8")
     print(f"Preview MP4 created: {audio_video} ({probe['duration_seconds']:.2f}s)")
     return audio_video, metadata
