@@ -244,6 +244,24 @@ def make_ambient(path: Path, duration: float) -> None:
     _write_wav(path, bed)
 
 
+def _story_word_timings(text: str, duration: float) -> list[dict]:
+    """Create deterministic timings from the exact script text used for narration."""
+    tokens = text.split()
+    if not tokens or duration <= 0:
+        raise ValueError("Continuous story text or measured duration is empty")
+    import re
+    weights = [max(1, len(re.sub(r"\\W", "", token))) for token in tokens]
+    total = sum(weights)
+    cursor = 0.0
+    rows = []
+    for token, weight in zip(tokens, weights):
+        end = cursor + duration * weight / total
+        rows.append({"word": token, "start": cursor, "end": end})
+        cursor = end
+    rows[-1]["end"] = duration
+    return rows
+
+
 def _scene_entries(scenes: list[dict], words: list[dict], intro_seconds: float) -> list[dict]:
     """Map one continuous word-timed narration track onto the visual beats."""
     expected_words = sum(len(str(scene["narration"]).split()) for scene in scenes)
@@ -344,6 +362,9 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     print(f"Narrating the complete {len(plan['scenes'])}-beat story in one continuous pass")
     narration_row = narrator.synthesize(story_text, cache)
     expected_total = INTRO_SECONDS + float(narration_row["duration"])
+    # Rebuild timing tokens from the exact authored script text. Do not trust
+    # a TTS-side tokenizer that may normalise or omit punctuation-bound words.
+    narration_row["words"] = _story_word_timings(story_text, float(narration_row["duration"]))
 
     if not TARGET_MIN <= expected_total <= TARGET_MAX:
         target_seconds = 92.0
@@ -357,6 +378,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         narrator = Narrator(voice, corrected_speed)
         narration_row = narrator.synthesize(story_text, cache)
         expected_total = INTRO_SECONDS + float(narration_row["duration"])
+        narration_row["words"] = _story_word_timings(story_text, float(narration_row["duration"]))
         speed = corrected_speed
         if not TARGET_MIN <= expected_total <= TARGET_MAX:
             raise ValueError(
