@@ -80,9 +80,9 @@ class FairytaleVideoInputTests(unittest.TestCase):
         story_text = _build_story_text(self.plan["scenes"])
         expected_words = sum(len(scene["narration"].split()) for scene in self.plan["scenes"])
         self.assertEqual(len(story_text.split()), expected_words)
-        self.assertIn("\\n\\n", story_text)
-        self.assertNotIn("\\\\n", story_text)
-        self.assertEqual(story_text, "\\n\\n".join(scene["narration"].strip() for scene in self.plan["scenes"]))
+        self.assertIn("\n\n", story_text)
+        self.assertNotIn("\\n", story_text)
+        self.assertEqual(story_text, "\n\n".join(scene["narration"].strip() for scene in self.plan["scenes"]))
 
     def test_srt_sidecar_uses_real_line_breaks(self):
         events = [{
@@ -95,9 +95,9 @@ class FairytaleVideoInputTests(unittest.TestCase):
             ],
         }]
         srt = _build_srt(events)
-        self.assertIn("1\\n00:00:01,600 --> 00:00:02,600\\nOnce upon a time.", srt)
-        self.assertNotIn("\\\\n", srt)
-        self.assertTrue(srt.endswith("\\n"))
+        self.assertIn("1\n00:00:01,600 --> 00:00:02,600\nOnce upon a time.", srt)
+        self.assertNotIn("\\n", srt)
+        self.assertTrue(srt.endswith("\n"))
 
     def test_authored_script_timing_preserves_every_word(self):
         script_words = [token for scene in self.plan["scenes"] for token in scene["narration"].split()]
