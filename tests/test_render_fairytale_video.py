@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "destination-prototype"))
-from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _chapter_frame, _scene_entries, _story_word_timings, write_continuous_narration
+from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _chapter_frame, _scene_entries, _story_word_timings_by_scene, write_continuous_narration
 
 
 class FairytaleVideoInputTests(unittest.TestCase):
@@ -78,21 +78,21 @@ class FairytaleVideoInputTests(unittest.TestCase):
 
     def test_authored_script_timing_preserves_every_word(self):
         script = self.plan["narration"]
-        words = _story_word_timings(script, 90.0)
+        words = _story_word_timings_by_scene(script, 90.0)
         self.assertEqual(len(words), len(script.split()))
         self.assertEqual([row["word"] for row in words], script.split())
         self.assertAlmostEqual(words[0]["start"], 0.0)
         self.assertAlmostEqual(words[-1]["end"], 90.0)
 
     def test_scene_boundaries_cover_all_authored_words_without_omissions(self):
-        words = _story_word_timings(self.plan["narration"], 90.0)
+        words = _story_word_timings_by_scene(self.plan["narration"], 90.0)
         entries = _scene_entries(self.plan["scenes"], words, 1.6)
         self.assertEqual(len(entries), len(self.plan["scenes"]))
         self.assertAlmostEqual(entries[0]["start"], 1.6)
         self.assertAlmostEqual(entries[-1]["start"] + entries[-1]["duration"], 91.6, places=2)
 
     def test_scene_entries_split_one_continuous_story_track(self):
-        words = _story_word_timings_by_scene(self.plan["scenes"], 90.0)
+        words = _story_word_timings_by_scene_by_scene(self.plan["scenes"], 90.0)
         entries = _scene_entries(self.plan["scenes"], words, 1.6)
         self.assertEqual(len(entries), 9)
         self.assertAlmostEqual(entries[0]["start"], 1.6, places=3)
@@ -106,7 +106,7 @@ class FairytaleVideoInputTests(unittest.TestCase):
             )
 
     def test_scene_timing_keeps_all_authored_words_attached_to_their_beat(self):
-        words = _story_word_timings_by_scene(self.plan["scenes"], 92.0)
+        words = _story_word_timings_by_scene_by_scene(self.plan["scenes"], 92.0)
         self.assertEqual(len(words), sum(len(scene["narration"].split()) for scene in self.plan["scenes"]))
         self.assertEqual(
             [word["scene_id"] for word in words if word["scene_id"] != words[0]["scene_id"]][0],
