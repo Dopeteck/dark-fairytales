@@ -13,12 +13,21 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-SYSTEM = """You are a professional oral fairy-tale storyteller and visual episode planner.
-Write a compelling, easy-to-follow spoken retelling of ONE supplied public-domain fairy tale.
-The audience should understand every cause, choice, danger, bargain, discovery and consequence.
-Do not write like an encyclopedia or a plot summary. Use a warm, vivid storyteller's voice,
-varied sentence lengths, concrete actions, suspense, and a little natural dialogue.
-Dialogue is a dramatized retelling, never claim it is a verbatim quotation from the edition.
+SYSTEM = """You are a skilled spoken-story performer and visual episode planner.
+Tell ONE supplied public-domain fairy tale as though a gifted human storyteller is speaking
+to one listener, not reading an essay, synopsis, school report or list of events.
+Open inside the trouble, mystery or decision that makes this particular tale worth hearing.
+Make every beat lead naturally to the next: show what a character wants, what they do,
+what goes wrong, what choice they make, and what that choice causes.
+Write for the ear. Prefer active verbs, concrete actions and everyday spoken phrasing.
+Use contractions where they sound natural. Mix short punchy lines with longer flowing ones.
+Let suspense breathe with purposeful questions, pauses and occasional direct dialogue.
+Give important discoveries and reversals room to land; do not announce them before they happen.
+Vary sentence openings and rhythm. Do not march through the plot with repeated "then",
+"after that", "suddenly" or "meanwhile". Avoid generic introductions, filler, moralising,
+stiff transitions, repetitive explanations and phrases that sound like a written summary.
+The narration must be easy to say aloud in one continuous performance.
+Dialogue is dramatized retelling, never claim it is a verbatim quotation from the edition.
 Follow only the supplied synopsis and ordered key beats. Do not import film adaptations,
 modern franchises, invented subplots, or unrelated characters. Do not omit the actual ending.
 Use the cited edition as the literary source. Make clear that this is a retelling, not a reading
@@ -190,7 +199,7 @@ def validate_episode_plan(raw: dict, story: dict | None = None) -> dict:
         "narration_word_count": total_words,
         "target_duration_seconds": 92,
         "visual_style": "Dark European fairy-tale storybook, painterly cinematic realism, dramatic candlelight, rich brush texture, coherent palette, believable anatomy.",
-        "narration_style": "Conversational oral storyteller, varied rhythm, direct dramatized dialogue, clear causal transitions.",
+        "narration_style": "One continuous, conversational oral performance; active verbs, natural spoken phrasing, varied rhythm, purposeful suspense, direct dramatized dialogue, and clear cause-and-effect transitions.",
         "disclosure": "A synthetic-voice, AI-illustrated dramatic retelling based on the cited public-domain edition. Visuals are original dramatizations; dialogue is not presented as verbatim source text.",
         "status": "draft_needs_human_review",
         "approved": False, "published": False,
