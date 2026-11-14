@@ -58,8 +58,8 @@ RUMPELSTILTSKIN_CHARACTER_LOCK = (
 
 NEGATIVE_GUIDANCE = (
     "No lettering, captions, watermark, collage, comic panels, modern objects, anime, "
-    "plastic 3D toy appearance, malformed anatomy, duplicate people or duplicate "
-    "Rumpelstiltskin, extra limbs, gore or graphic violence."
+    "plastic 3D toy appearance, malformed anatomy, duplicate people or repeated "
+    "character copies, extra limbs, gore or graphic violence."
 )
 
 GENERIC_NEGATIVE_GUIDANCE = (
