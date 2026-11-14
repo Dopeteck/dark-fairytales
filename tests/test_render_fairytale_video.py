@@ -47,12 +47,9 @@ class FairytaleVideoInputTests(unittest.TestCase):
             json.dumps(manifest), encoding="utf-8"
         )
 
-    def test_chapter_overlay_is_visible_and_preserves_vertical_frame_size(self):
-        source = Image.new("RGB", (1080, 1920), (35, 42, 50))
-        labelled = _chapter_frame(source, "NIGHT ONE — THE NECKLACE", 3)
-        self.assertEqual(labelled.size, (1080, 1920))
-        self.assertNotEqual(labelled.getpixel((80, 120)), source.getpixel((80, 120)))
-        self.assertEqual(labelled.getpixel((540, 1000)), source.getpixel((540, 1000)))
+    def test_video_renderer_has_no_chapter_banner_overlay(self):
+        import render_fairytale_video as renderer
+        self.assertFalse(hasattr(renderer, "_chapter_frame"))
 
     def test_story_plan_runs_in_chronological_order_with_a_clear_name_reveal(self):
         plan = json.loads((ROOT / "research" / "rumpelstiltskin-pilot.json").read_text(encoding="utf-8"))
@@ -71,7 +68,11 @@ class FairytaleVideoInputTests(unittest.TestCase):
         self.assertIn("Rumpelstiltskin!", plan["scenes"][-1]["narration"])
         self.assertEqual(plan["narration"], " ".join(scene["narration"] for scene in plan["scenes"]))
         self.assertTrue(150 <= len(plan["narration"].split()) <= 235)
+        self.assertIn("A miller wanted to impress the king", plan["narration"])
+        self.assertIn("That boast would put her life in danger", plan["narration"])
         self.assertIn("For two days", plan["narration"])
+        self.assertIn("The king wanted more", plan["narration"])
+        self.assertIn("“No,” he said", plan["narration"])
         self.assertIn("On the third day", plan["narration"])
         self.assertIn("forest's edge", plan["narration"])
         self.assertIn("wrench it free", plan["narration"])
