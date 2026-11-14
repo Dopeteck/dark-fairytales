@@ -54,7 +54,7 @@ class DailyFairytaleRunnerTests(unittest.TestCase):
     def _run_with_mocks(self, root: Path, fail_render: bool = False):
         queue_story = sample_story()
         (root / "fairytale_queue.json").write_text(json.dumps({
-            "schema_version": 1, "stories": [queue_story, sample_story("second-story")]
+            "schema_version": 1, "stories": [queue_story] + [sample_story(f"filler-{i}") for i in range(1, 8)]
         }), encoding="utf-8")
         plan = sample_plan(queue_story)
 
