@@ -99,7 +99,7 @@ class FairytaleVideoInputTests(unittest.TestCase):
             ],
         }]
         srt = _build_srt(events)
-        self.assertIn("1\n00:00:01,600 --> 00:00:02,600\nOnce upon a time.", srt)
+        self.assertIn("1\n00:00:00,000 --> 00:00:01,000\nOnce upon a time.", srt)
         self.assertNotIn("\\n", srt)
         self.assertTrue(srt.endswith("\n"))
 
@@ -168,7 +168,7 @@ class FairytaleVideoInputTests(unittest.TestCase):
             with wave.open(str(destination), "rb") as audio:
                 self.assertEqual(audio.getnframes(), round(1.0 * 24000))
                 self.assertEqual(audio.getframerate(), 24000)
-                self.assertEqual(audio.readframes(1), b"\\x10\\x00")
+                self.assertEqual(audio.readframes(1), b"\x10\x00")
 
     def test_ffmpeg_mix_reads_narration_and_ambient_from_correct_inputs(self):
         mix = _audio_mix_filter()
