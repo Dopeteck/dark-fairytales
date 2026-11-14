@@ -167,7 +167,7 @@ jobs:
             --images output/rumpelstiltskin-generated-scenes \
             --out output/rumpelstiltskin-video-review \
             --voice bm_fable \
-            --speed 0.96
+            --speed 0.92
 
       - name: Upload images, contact sheet, and review-only MP4
         if: always()
