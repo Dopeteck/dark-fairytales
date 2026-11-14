@@ -29,7 +29,7 @@ def sample_plan(story):
     lines = [
         "Mira left her village before sunrise, carrying one small bag and a promise she hoped she could keep. She had never travelled alone.",
         "At the forest edge she heard a voice calling her name from behind an old stone wall. Someone seemed to know her.",
-        "An elderly traveller stepped out and warned her that a dangerous creature guarded the narrow bridge ahead.",
+        "An elderly traveller stepped out and warned her that a dangerous creature guarded the narrow bridge ahead, especially after sunset.",
         "Mira listened carefully and noticed a hidden path beneath the tangled roots of an ancient tree. It led towards the bridge.",
         "She followed the path, but the creature heard her footsteps and blocked the bridge with a roar. There was nowhere else to cross.",
         "The traveller returned and showed her how to ring the bell hanging from the wooden bridge post. Its sound would frighten the creature.",
