@@ -49,6 +49,8 @@ def load_queue(path: Path) -> list[dict]:
         raise ValueError("Fairy-tale queue needs at least eight curated stories")
     seen = set()
     for item in stories:
+        if not isinstance(item, dict):
+            raise ValueError("Every queue entry must be an object")
         sid = _slug(_text(item.get("id"), "story id", 72))
         if sid in seen:
             raise ValueError(f"Duplicate story ID: {sid}")
