@@ -142,43 +142,6 @@ def _scene_frame(canvas: Image.Image, progress: float) -> Image.Image:
     )
 
 
-def _chapter_frame(frame: Image.Image, label: str, index: int) -> Image.Image:
-    """Add a concise chapter marker so viewers can track each story beat."""
-    base = frame.convert("RGBA")
-    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    left, top, right, bottom = 56, 92, WIDTH - 56, 236
-    draw.rounded_rectangle(
-        (left, top, right, bottom),
-        radius=28,
-        fill=(5, 9, 14, 188),
-        outline=(198, 158, 83, 220),
-        width=3,
-    )
-    draw.text(
-        (left + 30, top + 22),
-        f"CHAPTER {index:02d}",
-        font=_font(23),
-        fill=(226, 190, 117, 255),
-    )
-    title_size = 39
-    title_font = _font(title_size)
-    text = label.upper()
-    max_width = right - left - 60
-    while text and draw.textbbox((0, 0), text, font=title_font)[2] > max_width and title_size > 27:
-        title_size -= 2
-        title_font = _font(title_size)
-    draw.text(
-        (left + 30, top + 66),
-        text,
-        font=title_font,
-        fill=(255, 248, 232, 255),
-        stroke_width=1,
-        stroke_fill=(0, 0, 0, 150),
-    )
-    return Image.alpha_composite(base, overlay).convert("RGB")
-
-
 def _intro_frame(image: Image.Image, title: str) -> Image.Image:
     frame = ImageOps.fit(image.convert("RGB"), (WIDTH, HEIGHT), method=Image.Resampling.LANCZOS).convert("RGBA")
     overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
@@ -451,8 +414,6 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
             alpha = 1.0 - remaining / CROSSFADE_SECONDS
             next_image = _scene_frame(canvases[scene_index + 1], 0.02)
             current = Image.blend(current, next_image, max(0.0, min(1.0, alpha)))
-        chapter = plan["scenes"][scene_index].get("chapter", plan["scenes"][scene_index]["title"])
-        current = _chapter_frame(current, chapter, scene_index + 1)
         return np.asarray(current)
 
     clip = VideoClip(frame, duration=total)
@@ -507,7 +468,9 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         "captions": "estimated word-timed karaoke captions plus SRT sidecar",
         "transitions": f"{CROSSFADE_SECONDS:.2f}s crossfades aligned to story beat boundaries",
         "narration_word_count": len(story_text.split()),
-        "storytelling_mode": "continuous narration; no per-scene voice resets",
+        "storytelling_mode": "continuous conversational storyteller narration; no per-scene voice resets",
+        "chapter_overlays": False,
+        "narration_style": "spoken storyteller with direct dialogue, varied sentence lengths and dramatic punctuation",
         "image_manifest": str((images_dir / "generation-manifest.json").name),
         "preview_only": True,
         "approved": False,
