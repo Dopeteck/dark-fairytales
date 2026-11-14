@@ -62,6 +62,12 @@ NEGATIVE_GUIDANCE = (
     "Rumpelstiltskin, extra limbs, gore or graphic violence."
 )
 
+GENERIC_NEGATIVE_GUIDANCE = (
+    "No lettering, captions, watermark, collage, comic panels, modern objects, anime, "
+    "plastic 3D toy appearance, malformed anatomy, duplicate people or duplicate main "
+    "characters, extra limbs, gore or graphic violence."
+)
+
 SCENE_VISUALS = {
     "beat-01-threat": (
         "The miller's daughter, an adult woman in her early twenties, alone in a vast "
