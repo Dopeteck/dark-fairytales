@@ -50,7 +50,7 @@ class GeneratorTests(unittest.TestCase):
         narration = [
             "Mira left her village before sunrise, carrying one small bag and a promise she hoped she could keep.",
             "At the forest edge she heard a voice calling her name from behind an old stone wall.",
-            "An elderly traveller warned her that a dangerous creature guarded the narrow bridge ahead.",
+            "An elderly traveller warned her that a dangerous creature guarded the narrow bridge ahead, especially after sunset when the last daylight disappeared behind the hills.",
             "Mira listened carefully and noticed a hidden path beneath the tangled roots of an ancient tree.",
             "She followed the path, but the creature heard her footsteps and blocked the bridge with a roar.",
             "The traveller returned and showed her how to ring the bell hanging from the wooden bridge post.",
