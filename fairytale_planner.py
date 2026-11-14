@@ -98,11 +98,32 @@ def next_story(stories: list[dict], state: dict) -> tuple[dict, dict]:
     return selected, state
 
 
-def validate_episode_plan(raw: dict, story: dict) -> dict:
+def validate_episode_plan(raw: dict, story: dict | None = None) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("Episode plan must be a JSON object")
     title = _text(raw.get("title"), "episode title", 100)
     logline = _text(raw.get("logline"), "episode logline", 360)
+    if story is None:
+        basis = raw.get("retelling_basis", {})
+        source = raw.get("source", {})
+        story = {
+            "id": raw.get("story_id"),
+            "title": basis.get("queue_title", title) if isinstance(basis, dict) else title,
+            "synopsis": basis.get("synopsis", logline) if isinstance(basis, dict) else logline,
+            "key_beats": basis.get("key_beats", []) if isinstance(basis, dict) else [],
+            "source": source,
+        }
+    story_id = _slug(_text(story.get("id"), "story ID", 72))
+    source = story.get("source")
+    if not isinstance(source, dict):
+        raise ValueError("Episode must retain its named source edition")
+    source_title = _text(source.get("title"), "source title", 180)
+    source_author = _text(source.get("author"), "source author", 120)
+    source_url = _text(source.get("url"), "source URL", 500)
+    parsed_source = urlparse(source_url)
+    if parsed_source.scheme != "https" or parsed_source.netloc not in {"www.gutenberg.org", "gutenberg.org"}:
+        raise ValueError("Episode source must be a secure Project Gutenberg URL")
+    edition_note = _text(source.get("edition_note"), "source edition note", 500)
     characters = raw.get("characters")
     if not isinstance(characters, list) or not 2 <= len(characters) <= 5:
         raise ValueError("Episode must define 2–5 recurring characters")
@@ -145,20 +166,20 @@ def validate_episode_plan(raw: dict, story: dict) -> dict:
     if not 180 <= total_words <= 235:
         raise ValueError(f"Episode narration has {total_words} words; expected 180–235")
     narration = "\n\n".join(x["narration"] for x in clean_scenes)
-    source = story["source"]
     return {
         "format": "dark_fairytale_episode_v1",
-        "story_id": story["id"],
+        "story_id": story_id,
         "title": title,
         "series": "Dark Fairytales",
         "logline": logline,
         "source": {
-            "title": source["title"], "author": source["author"],
-            "url": source["url"], "edition_note": source["edition_note"],
+            "title": source_title, "author": source_author,
+            "url": source_url, "edition_note": edition_note,
         },
         "retelling_basis": {
-            "queue_title": story["title"], "synopsis": story["synopsis"],
-            "key_beats": story["key_beats"],
+            "queue_title": _text(story.get("title"), "queue story title", 120),
+            "synopsis": _text(story.get("synopsis"), "queue synopsis", 1800),
+            "key_beats": story.get("key_beats", []),
             "scope": "A new, abridged dramatic retelling based on the named edition; not a verbatim reading.",
         },
         "characters": clean_characters,
