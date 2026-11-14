@@ -51,6 +51,8 @@ class FairytaleVideoInputTests(unittest.TestCase):
     def test_video_renderer_has_no_chapter_banner_overlay(self):
         import render_fairytale_video as renderer
         self.assertFalse(hasattr(renderer, "_chapter_frame"))
+        self.assertFalse(hasattr(renderer, "_intro_frame"))
+        self.assertFalse(hasattr(renderer, "INTRO_SECONDS"))
 
     def test_story_plan_runs_in_chronological_order_with_a_clear_name_reveal(self):
         plan = json.loads((ROOT / "research" / "rumpelstiltskin-pilot.json").read_text(encoding="utf-8"))
@@ -88,7 +90,7 @@ class FairytaleVideoInputTests(unittest.TestCase):
 
     def test_srt_sidecar_uses_real_line_breaks(self):
         events = [{
-            "start": 1.6,
+            "start": 0.0,
             "words": [
                 {"word": "Once", "start": 0.0, "end": 0.3},
                 {"word": "upon", "start": 0.3, "end": 0.6},
@@ -111,18 +113,18 @@ class FairytaleVideoInputTests(unittest.TestCase):
 
     def test_scene_boundaries_cover_all_authored_words_without_omissions(self):
         words = _story_word_timings_by_scene(self.plan["scenes"], 90.0)
-        entries = _scene_entries(self.plan["scenes"], words, 1.6)
+        entries = _scene_entries(self.plan["scenes"], words, 0.0)
         self.assertEqual(len(entries), len(self.plan["scenes"]))
-        self.assertAlmostEqual(entries[0]["start"], 1.6)
-        self.assertAlmostEqual(entries[-1]["start"] + entries[-1]["duration"], 91.6, places=2)
+        self.assertAlmostEqual(entries[0]["start"], 0.0)
+        self.assertAlmostEqual(entries[-1]["start"] + entries[-1]["duration"], 90.0, places=2)
 
     def test_scene_entries_split_one_continuous_story_track(self):
         words = _story_word_timings_by_scene(self.plan["scenes"], 90.0)
-        entries = _scene_entries(self.plan["scenes"], words, 1.6)
+        entries = _scene_entries(self.plan["scenes"], words, 0.0)
         self.assertEqual(len(entries), 9)
-        self.assertAlmostEqual(entries[0]["start"], 1.6, places=3)
+        self.assertAlmostEqual(entries[0]["start"], 0.0, places=3)
         final_end = entries[-1]["start"] + entries[-1]["duration"]
-        self.assertAlmostEqual(final_end, 91.6, places=2)
+        self.assertAlmostEqual(final_end, 90.0, places=2)
         for previous, current in zip(entries, entries[1:]):
             self.assertAlmostEqual(
                 current["start"],
@@ -137,12 +139,12 @@ class FairytaleVideoInputTests(unittest.TestCase):
             [word["scene_id"] for word in words if word["scene_id"] != words[0]["scene_id"]][0],
             self.plan["scenes"][1]["id"],
         )
-        entries = _scene_entries(self.plan["scenes"], words, 1.6)
+        entries = _scene_entries(self.plan["scenes"], words, 0.0)
         self.assertEqual(len(entries), 9)
-        self.assertAlmostEqual(entries[0]["start"], 1.6, places=3)
-        self.assertAlmostEqual(entries[-1]["start"] + entries[-1]["duration"], 93.6, places=2)
+        self.assertAlmostEqual(entries[0]["start"], 0.0, places=3)
+        self.assertAlmostEqual(entries[-1]["start"] + entries[-1]["duration"], 92.0, places=2)
 
-    def test_continuous_narration_writer_adds_intro_once_and_no_scene_gaps(self):
+    def test_continuous_narration_starts_immediately_without_title_card_silence(self):
         from captions import word_timings
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -152,20 +154,21 @@ class FairytaleVideoInputTests(unittest.TestCase):
                 audio.setnchannels(1)
                 audio.setsampwidth(2)
                 audio.setframerate(24000)
-                audio.writeframes(b"\0\0" * 24000)
+                audio.writeframes(b"\x10\x00" * 24000)
             text = "Once a miller made a foolish promise."
             row = {
                 "path": str(source),
                 "duration": 1.0,
                 "words": word_timings(text, 1.0),
             }
-            events = write_continuous_narration(destination, row, 1.5, 0.5)
+            events = write_continuous_narration(destination, row, 1.0)
             self.assertEqual(len(events), 1)
-            self.assertEqual(events[0]["start"], 0.5)
+            self.assertEqual(events[0]["start"], 0.0)
             self.assertEqual(len(events[0]["words"]), len(text.split()))
             with wave.open(str(destination), "rb") as audio:
-                self.assertEqual(audio.getnframes(), round(1.5 * 24000))
+                self.assertEqual(audio.getnframes(), round(1.0 * 24000))
                 self.assertEqual(audio.getframerate(), 24000)
+                self.assertEqual(audio.readframes(1), b"\\x10\\x00")
 
     def test_ffmpeg_mix_reads_narration_and_ambient_from_correct_inputs(self):
         mix = _audio_mix_filter()
