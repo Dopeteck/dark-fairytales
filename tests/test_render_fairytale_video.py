@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "destination-prototype"))
 from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _scene_entries, _story_word_timings_by_scene, _build_story_text, _build_srt, write_continuous_narration
+from fairytale_planner import validate_episode_plan
 
 
 class FairytaleVideoInputTests(unittest.TestCase):
@@ -181,6 +182,73 @@ class FairytaleVideoInputTests(unittest.TestCase):
                 self.assertEqual(audio.getsampwidth(), 2)
                 self.assertGreater(audio.getframerate(), 0)
                 self.assertGreater(audio.getnframes(), 0)
+
+    def test_renderer_loads_a_different_fairytale_without_rumpelstiltskin_schema(self):
+        story = {
+            "id": "test-tale", "title": "The Test Tale",
+            "synopsis": "A brave heroine faces a forest danger and returns safely.",
+            "key_beats": ["She leaves", "A helper appears", "She faces danger", "She returns", "The village is safe"],
+            "source": {"title": "Test Collection", "author": "Traditional",
+                       "url": "https://www.gutenberg.org/ebooks/11027",
+                       "edition_note": "Test edition."},
+        }
+        characters = [
+            {"id": "hero", "name": "Mira", "role": "heroine",
+             "visual_identity": "Young woman with a green cloak and long black braid."},
+            {"id": "helper", "name": "Rowan", "role": "helper",
+             "visual_identity": "Elderly traveller with a grey beard and brown coat."},
+        ]
+        narrations = [
+            "Mira left her village before sunrise, carrying one small bag and a promise she hoped she could keep.",
+            "At the forest edge she heard a voice calling her name from behind an old stone wall.",
+            "An elderly traveller warned her that a dangerous creature guarded the narrow bridge ahead.",
+            "Mira listened carefully and noticed a hidden path beneath the tangled roots of an ancient tree.",
+            "She followed the path, but the creature heard her footsteps and blocked the bridge with a roar.",
+            "The traveller returned and showed her how to ring the bell hanging from the wooden bridge post.",
+            "Its clear sound startled the creature long enough for Mira to cross and reach the far side safely.",
+            "When Mira returned home, she kept her promise and told the village how the traveller had helped her.",
+        ]
+        raw = {
+            "title": "The Hidden Path",
+            "logline": "A brave young woman finds a way through a dangerous forest.",
+            "characters": characters,
+            "scenes": [
+                {"title": f"Scene {i}", "narration": line,
+                 "visual_prompt": "Cinematic painterly storybook illustration showing the named characters in a dark forest beside an ancient stone bridge, with one clear visible action and dramatic moonlight.",
+                 "character_ids": ["hero"] if i not in {3, 6} else ["hero", "helper"]}
+                for i, line in enumerate(narrations, 1)
+            ],
+        }
+        plan = validate_episode_plan(raw, story)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan_path = root / "episode.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            images_dir = root / "images"
+            images_dir.mkdir()
+            rows = []
+            for index, scene in enumerate(plan["scenes"], 1):
+                filename = f"{index:02d}-{scene['id']}.jpg"
+                image_path = images_dir / filename
+                Image.new("RGB", (832, 1472), (index * 15, 65, 90)).save(image_path, quality=86)
+                rows.append({
+                    "scene_id": scene["id"], "file": filename,
+                    "sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
+                    "model": "@cf/black-forest-labs/flux-2-klein-4b",
+                })
+            manifest = {
+                "story": plan["title"], "story_id": plan["story_id"],
+                "scene_count": 8, "status": "generated_unapproved_review_only",
+                "approved": False, "published": False,
+                "images": rows, "model_strategy": {"all_scenes": "@cf/black-forest-labs/flux-2-klein-4b"},
+            }
+            (images_dir / "generation-manifest.json").write_text(json.dumps(manifest))
+            loaded, saved_manifest, saved_rows, images = load_inputs(plan_path, images_dir)
+            self.assertEqual(loaded["format"], "dark_fairytale_episode_v1")
+            self.assertEqual(loaded["story_id"], "test-tale")
+            self.assertEqual(len(images), 8)
+            self.assertEqual(saved_manifest["story_id"], "test-tale")
+            self.assertFalse(saved_manifest["approved"])
 
     def test_requires_all_nine_generated_images_and_checksums(self):
         with tempfile.TemporaryDirectory() as tmp:
