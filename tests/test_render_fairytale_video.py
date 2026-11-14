@@ -71,7 +71,7 @@ class FairytaleVideoInputTests(unittest.TestCase):
         self.assertIn("A miller wanted to impress the king", plan["narration"])
         self.assertIn("That boast would put her life in danger", plan["narration"])
         self.assertIn("For two days", plan["narration"])
-        self.assertIn("The king wanted more", plan["narration"])
+        self.assertIn("But the king wanted more", plan["narration"])
         self.assertIn("“No,” he said", plan["narration"])
         self.assertIn("On the third day", plan["narration"])
         self.assertIn("forest's edge", plan["narration"])
