@@ -8,7 +8,7 @@
   "aspect_ratio": "9:16",
   "target_fps": 30,
   "target_duration_seconds": 90,
-  "narration_word_count": 224,
+  "narration_word_count": 234,
   "source_ids": [
     "grimm1857_hunt1884"
   ],
@@ -22,13 +22,13 @@
       "scope_note": "The linked online transcription is Hunt's English text based on the Grimm tale; the episode identifies the German source edition and translation separately. The 1857 story ends with Rumpelstiltskin stamping his foot into the floor and wrenching it free."
     }
   ],
-  "narration": "Long ago, a poor miller wanted to impress the king. He boasted that his daughter could spin straw into gold. The king didn't ask if it was true. He locked her in a room full of straw. “Make it gold by morning—or die.” She wept beside the wheel. A tiny man appeared. “I can spin it—but what will you give me?” Her necklace. By dawn, the straw was gold. The king wanted more. On the second night, he filled a bigger room with straw. The stranger returned and took her ring. On the third night, the room was bigger still. She had nothing left. The king promised to marry her if she succeeded. The stranger demanded her first child. Desperate, she agreed. The king kept his promise. A year later, the stranger returned for the queen's baby. She offered him all the kingdom's riches, but he refused. He wanted something living. He gave her three days to guess his name. For two days, she tried every name she knew while her messengers searched the land. On the third day, one messenger found him dancing beside a fire at the forest's edge, singing his secret name. The queen spoke the name: “Rumpelstiltskin!” In fury, he stamped his foot deep into the floor and had to wrench it free. Then he fled. Her child was safe.",
+  "narration": "A miller wanted to impress the king, so he made a reckless boast: his daughter could spin straw into gold. That boast would put her life in danger. The king locked her in a room piled with straw. “Make it gold by morning,” he ordered. “Or you die.” Then a tiny stranger appeared. “I can help,” he said. “What will you give me?” She handed over her necklace. By dawn, the straw had become gold. But the king wanted more. The next night, he filled a larger room. The little man returned, and this time he took her ring. On the third night, there was still more straw—and she had nothing left. The king promised to marry her if she succeeded. The stranger demanded her first child. She agreed. The king kept his promise. A year later, the stranger came for the baby. The queen offered riches instead. “No,” he said. He wanted the child. He gave her three days to guess his name. For two days, every guess failed. Her messengers searched the land, but no one knew the answer. On the third day, a messenger returned: he had seen the little man dancing beside a fire at the forest's edge, singing to himself. The queen spoke the name: “Rumpelstiltskin!” Enraged, he stamped his foot so deep into the floor he had to wrench it free. Then he fled. Her child was safe.",
   "scenes": [
     {
       "id": "beat-02-boast",
       "type": "still_kenburns",
       "duration_seconds": 8,
-      "narration": "Long ago, a poor miller wanted to impress the king. He boasted that his daughter could spin straw into gold.",
+      "narration": "A miller wanted to impress the king, so he made a reckless boast: his daughter could spin straw into gold. That boast would put her life in danger.",
       "title": "The Miller's Foolish Boast",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -50,7 +50,7 @@
       "id": "beat-01-threat",
       "type": "still_kenburns",
       "duration_seconds": 9,
-      "narration": "The king didn't ask if it was true. He locked her in a room full of straw. “Make it gold by morning—or die.”",
+      "narration": "The king locked her in a room piled with straw. “Make it gold by morning,” he ordered. “Or you die.”",
       "title": "A Deadly Test",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -72,7 +72,7 @@
       "id": "beat-03-first-bargains",
       "type": "still_kenburns",
       "duration_seconds": 11,
-      "narration": "She wept beside the wheel. A tiny man appeared. “I can spin it—but what will you give me?” Her necklace. By dawn, the straw was gold.",
+      "narration": "Then a tiny stranger appeared. “I can help,” he said. “What will you give me?” She handed over her necklace. By dawn, the straw had become gold.",
       "title": "A Stranger at the Wheel",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -94,7 +94,7 @@
       "id": "beat-04-king-demands",
       "type": "still_kenburns",
       "duration_seconds": 9,
-      "narration": "The king wanted more. On the second night, he filled a bigger room with straw. The stranger returned and took her ring.",
+      "narration": "But the king wanted more. The next night, he filled a larger room. The little man returned, and this time he took her ring.",
       "title": "The King Wants More",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -116,7 +116,7 @@
       "id": "beat-05-child-pact",
       "type": "still_kenburns",
       "duration_seconds": 12,
-      "narration": "On the third night, the room was bigger still. She had nothing left. The king promised to marry her if she succeeded. The stranger demanded her first child. Desperate, she agreed.",
+      "narration": "On the third night, there was still more straw—and she had nothing left. The king promised to marry her if she succeeded. The stranger demanded her first child. She agreed.",
       "title": "The Price of a Crown",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -138,7 +138,7 @@
       "id": "beat-06-claim",
       "type": "still_kenburns",
       "duration_seconds": 11,
-      "narration": "The king kept his promise. A year later, the stranger returned for the queen's baby. She offered him all the kingdom's riches, but he refused. He wanted something living.",
+      "narration": "The king kept his promise. A year later, the stranger came for the baby. The queen offered riches instead. “No,” he said. He wanted the child.",
       "title": "The Promise Comes Due",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -160,7 +160,7 @@
       "id": "beat-07-three-days",
       "type": "still_kenburns",
       "duration_seconds": 10,
-      "narration": "He gave her three days to guess his name. For two days, she tried every name she knew while her messengers searched the land.",
+      "narration": "He gave her three days to guess his name. For two days, every guess failed. Her messengers searched the land, but no one knew the answer.",
       "title": "Three Days to Guess",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -182,7 +182,7 @@
       "id": "beat-08-forest-fire",
       "type": "still_kenburns",
       "duration_seconds": 9,
-      "narration": "On the third day, one messenger found him dancing beside a fire at the forest's edge, singing his secret name.",
+      "narration": "On the third day, a messenger returned: he had seen the little man dancing beside a fire at the forest's edge, singing to himself.",
       "title": "The Secret in the Forest",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -204,7 +204,7 @@
       "id": "beat-09-foot-revelation",
       "type": "still_kenburns",
       "duration_seconds": 11,
-      "narration": "The queen spoke the name: “Rumpelstiltskin!” In fury, he stamped his foot deep into the floor and had to wrench it free. Then he fled. Her child was safe.",
+      "narration": "The queen spoke the name: “Rumpelstiltskin!” Enraged, he stamped his foot so deep into the floor he had to wrench it free. Then he fled. Her child was safe.",
       "title": "The Name Breaks the Bargain",
       "source_ids": [
         "grimm1857_hunt1884"
@@ -232,5 +232,6 @@
     "accepted_license_categories": "Reuse destination_history.COMMERCIAL_LICENSES only; record exact source URL, rights URL, creator, rights statement, resolution, content hash, and review result.",
     "render_gate": "Every image-backed beat requires a relevant, high-resolution, downloaded and validated asset with explicit human approval and no unresolved review flags. No illustration or text-card fallback.",
     "current_status": "No assets have been sourced, verified, or approved. This plan is not renderable."
-  }
+  },
+  "narration_style": "Spoken dark-fairytale storyteller: conversational hook, short dramatic sentences, direct dialogue, contrast and suspense; avoid academic/expository summary."
 }
