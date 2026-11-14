@@ -20,6 +20,12 @@ from typing import Any
 import requests
 from PIL import Image
 
+import sys
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from fairytale_planner import validate_episode_plan
+
 MODEL_ID = "@cf/black-forest-labs/flux-2-klein-4b"
 RUMPELSTILTSKIN_MODEL_ID = "@cf/black-forest-labs/flux-2-klein-9b"
 API_ROOT = "https://api.cloudflare.com/client/v4/accounts"
@@ -148,6 +154,38 @@ def build_prompt(scene: dict[str, Any], index: int) -> str:
     return prompt
 
 
+def build_episode_prompt(plan: dict[str, Any], scene: dict[str, Any], index: int) -> str:
+    """Build a story-agnostic scene prompt from the validated character bible."""
+    visual = str(scene.get("visual_prompt", "")).strip()
+    if len(visual) < 40:
+        raise ValueError(f"Scene {scene.get('id')} needs a specific visual_prompt")
+    characters = {item["id"]: item for item in plan.get("characters", [])}
+    selected = []
+    for character_id in scene.get("character_ids", []):
+        character = characters.get(character_id)
+        if not character:
+            raise ValueError(f"Unknown recurring character in scene {scene.get('id')}: {character_id}")
+        selected.append(
+            f"{character['name']} ({character['role']}): {character['visual_identity']}"
+        )
+    if not selected:
+        raise ValueError(f"Scene {scene.get('id')} must show at least one defined character")
+    recurring_bible = "Recurring character designs; keep these appearances consistent: " + " ".join(selected)
+    parts = [
+        "Create one cinematic vertical 9:16 storybook illustration. " + visual,
+        recurring_bible,
+        f"Scene {index} of the fairy tale {plan.get('title', '')}.",
+        str(plan.get("visual_style", STYLE_BIBLE)),
+        NEGATIVE_GUIDANCE,
+    ]
+    prompt = " ".join(parts)
+    if len(prompt) > 2048:
+        raise ValueError(
+            f"Prompt for {scene.get('id')} is {len(prompt)} characters; shorten the scene visual prompt, never truncate character identity."
+        )
+    return prompt
+
+
 def _decode_image(payload: dict[str, Any]) -> bytes:
     image_value = payload.get("result", {}).get("image")
     if not isinstance(image_value, str) or not image_value:
@@ -271,6 +309,9 @@ def run(
     resume: bool = False,
 ) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    generic_episode = plan.get("format") == "dark_fairytale_episode_v1"
+    if generic_episode:
+        plan = validate_episode_plan(plan)
     scenes = plan.get("scenes", [])
     if not scenes:
         raise ValueError("The story plan contains no scenes")
@@ -279,7 +320,7 @@ def run(
         if not scenes:
             raise ValueError(f"Requested scene {only_scene!r} is not in the story plan")
 
-    uses_rumpel = any(str(scene.get("id")) in RUMPELSTILTSKIN_SCENES for scene in scenes)
+    uses_rumpel = (not generic_episode) and any(str(scene.get("id")) in RUMPELSTILTSKIN_SCENES for scene in scenes)
     reference_bytes = None
     scale_reference_bytes = None
     if uses_rumpel:
@@ -307,10 +348,14 @@ def run(
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, Any] = {
         "story": plan.get("title", plan.get("series", "Untitled story")),
-        "model_strategy": {
-            "character_scenes": RUMPELSTILTSKIN_MODEL_ID,
-            "other_scenes": MODEL_ID,
-        },
+        "story_id": plan.get("story_id"),
+        "source": plan.get("source"),
+        "disclosure": plan.get("disclosure"),
+        "model_strategy": (
+            {"all_scenes": MODEL_ID, "character_identity": "textual character bible in every scene prompt"}
+            if generic_episode else
+            {"character_scenes": RUMPELSTILTSKIN_MODEL_ID, "other_scenes": MODEL_ID}
+        ),
         "width": OUTPUT_WIDTH,
         "height": OUTPUT_HEIGHT,
         "status": "generated_unapproved_review_only",
@@ -324,8 +369,8 @@ def run(
 
     for index, scene in enumerate(scenes, 1):
         scene_id = str(scene["id"])
-        prompt = build_prompt(scene, index)
-        is_character_scene = scene_id in RUMPELSTILTSKIN_SCENES
+        prompt = build_episode_prompt(plan, scene, index) if generic_episode else build_prompt(scene, index)
+        is_character_scene = (not generic_episode) and scene_id in RUMPELSTILTSKIN_SCENES
         scene_reference = reference_bytes if is_character_scene else None
         scene_scale_reference = scale_reference_bytes if is_character_scene else None
         preferred_model_id = RUMPELSTILTSKIN_MODEL_ID if is_character_scene else MODEL_ID
@@ -402,6 +447,9 @@ def run(
             "resumed_from_partial_run": resumed,
             "approved": False,
         })
+        manifest["scene_count"] = len(manifest["images"])
+        manifest_path = output_dir / "generation-manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         action = "Reused" if resumed else "Generated"
         print(f"{action} {index}/{len(scenes)}: {path.name} ({width}x{height})")
         if index < len(scenes) and pause_seconds > 0 and not resumed:
