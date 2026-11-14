@@ -38,7 +38,6 @@ from story_store import write_json
 
 FPS = 30
 WIDTH, HEIGHT = 1080, 1920
-INTRO_SECONDS = 1.6
 CROSSFADE_SECONDS = 0.38
 TARGET_MIN, TARGET_MAX = 75.0, 115.0
 
@@ -147,35 +146,6 @@ def _scene_frame(canvas: Image.Image, progress: float) -> Image.Image:
     )
 
 
-def _intro_frame(image: Image.Image, title: str) -> Image.Image:
-    frame = ImageOps.fit(image.convert("RGB"), (WIDTH, HEIGHT), method=Image.Resampling.LANCZOS).convert("RGBA")
-    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    box = (58, 130, WIDTH - 58, 330)
-    draw.rounded_rectangle(box, radius=34, fill=(8, 12, 18, 182), outline=(205, 166, 91, 210), width=3)
-    font = _font(58)
-    words = title.split()
-    lines, line = [], ""
-    for word in words:
-        candidate = (line + " " + word).strip()
-        if draw.textbbox((0, 0), candidate, font=font)[2] <= box[2] - box[0] - 44:
-            line = candidate
-        else:
-            if line:
-                lines.append(line)
-            line = word
-    if line:
-        lines.append(line)
-    lines = lines[:2]
-    line_h = 72
-    y = box[1] + (box[3] - box[1] - len(lines) * line_h) // 2
-    for text in lines:
-        draw.text((WIDTH // 2, y), text, font=font, fill=(255, 248, 230), anchor="mm",
-                  stroke_width=2, stroke_fill=(0, 0, 0, 180))
-        y += line_h
-    return Image.alpha_composite(frame, overlay).convert("RGB")
-
-
 def _write_wav(path: Path, samples: np.ndarray) -> None:
     data = np.asarray(samples, dtype=np.float32).reshape(-1)
     if not data.size or not np.isfinite(data).all():
@@ -239,7 +209,7 @@ def _story_word_timings_by_scene(scenes: list[dict], duration: float) -> list[di
     return rows
 
 
-def _scene_entries(scenes: list[dict], words: list[dict], intro_seconds: float) -> list[dict]:
+def _scene_entries(scenes: list[dict], words: list[dict], intro_seconds: float = 0.0) -> list[dict]:
     """Map word timings to the beat explicitly, not by a second tokenizer."""
     entries = []
     cursor = 0
@@ -293,9 +263,8 @@ def write_continuous_narration(
     path: Path,
     audio_row: dict,
     total_seconds: float,
-    intro_seconds: float,
 ) -> list[dict]:
-    """Write one uninterrupted narration recording after the visual intro."""
+    """Write speech from the first frame with no silent title-card lead-in."""
     with wave.open(audio_row["path"], "rb") as source:
         if (source.getnchannels(), source.getsampwidth(), source.getframerate()) != (1, 2, RATE):
             raise ValueError("Kokoro output must be mono 24kHz PCM")
@@ -308,15 +277,13 @@ def write_continuous_narration(
         output.setnchannels(1)
         output.setsampwidth(2)
         output.setframerate(RATE)
-        output.writeframes(b"\0\0" * round(intro_seconds * RATE))
         output.writeframes(frames)
-        remaining = round(total_seconds * RATE) - round((intro_seconds + speech_seconds) * RATE)
+        remaining = round(total_seconds * RATE) - round(speech_seconds * RATE)
         if remaining < -2:
             raise ValueError("Continuous narration is longer than the target video")
         if remaining > 0:
             output.writeframes(b"\0\0" * remaining)
-    return [{"start": intro_seconds, "words": audio_row["words"]}]
-
+    return [{"start": 0.0, "words": audio_row["words"]}]
 
 def _probe(path: Path) -> dict:
     result = subprocess.run(
@@ -367,7 +334,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     narrator = Narrator(voice, speed)
     print(f"Narrating the complete {len(plan['scenes'])}-beat story in one continuous pass")
     narration_row = narrator.synthesize(story_text, cache)
-    expected_total = INTRO_SECONDS + float(narration_row["duration"])
+    expected_total = float(narration_row["duration"])
     # Rebuild timing tokens from the exact authored script text. Do not trust
     # a TTS-side tokenizer that may normalise or omit punctuation-bound words.
     narration_row["words"] = _story_word_timings_by_scene(plan["scenes"], float(narration_row["duration"]))
@@ -383,7 +350,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         print(f"Adjusting continuous Kokoro pace from {speed:.2f} to {corrected_speed:.2f}")
         narrator = Narrator(voice, corrected_speed)
         narration_row = narrator.synthesize(story_text, cache)
-        expected_total = INTRO_SECONDS + float(narration_row["duration"])
+        expected_total = float(narration_row["duration"])
         narration_row["words"] = _story_word_timings_by_scene(plan["scenes"], float(narration_row["duration"]))
         speed = corrected_speed
         if not TARGET_MIN <= expected_total <= TARGET_MAX:
@@ -392,20 +359,16 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
                 f"{TARGET_MIN:.0f}–{TARGET_MAX:.0f}s review range"
             )
 
-    entries = _scene_entries(plan["scenes"], narration_row["words"], INTRO_SECONDS)
+    entries = _scene_entries(plan["scenes"], narration_row["words"], 0.0)
     total = expected_total
     events = write_continuous_narration(
-        work / "narration.wav", narration_row, total, INTRO_SECONDS
+        work / "narration.wav", narration_row, total
     )
     ambient_path = work / "ambient.wav"
     make_ambient(ambient_path, total)
 
     canvases = [_prepare_canvas(image) for image in images]
-    intro = _intro_frame(images[0], plan["title"])
-
     def frame(t: float):
-        if t < INTRO_SECONDS:
-            return np.asarray(intro)
         scene_index = len(entries) - 1
         for i, entry in enumerate(entries):
             if t < entry["start"] + entry["duration"]:
@@ -477,6 +440,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         "transitions": f"{CROSSFADE_SECONDS:.2f}s crossfades aligned to story beat boundaries",
         "narration_word_count": len(story_text.split()),
         "storytelling_mode": "continuous conversational storyteller narration; no per-scene voice resets",
+        "opening": "full_bleed_scene_one_no_title_overlay",
         "chapter_overlays": False,
         "narration_style": "spoken storyteller with direct dialogue, varied sentence lengths and dramatic punctuation",
         "image_manifest": str((images_dir / "generation-manifest.json").name),
