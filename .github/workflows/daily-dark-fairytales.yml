@@ -1,6 +1,13 @@
 name: Daily Dark Fairytales
 
 on:
+  # One branch-scoped end-to-end run for validation before any merge.
+  # This deliberately does not trigger on main or publish/deliver anything.
+  push:
+    branches:
+      - feature/dark-folklore-shorts
+    paths:
+      - .github/workflows/daily-dark-fairytales.yml
   schedule:
     # 09:00 Africa/Lagos (UTC+1)
     - cron: "0 8 * * *"
@@ -146,4 +153,3 @@ jobs:
             state/fairytale_rotation.json
           if-no-files-found: warn
           retention-days: 14
-
