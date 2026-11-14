@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "destination-prototype"))
-from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _chapter_frame, _scene_entries, _story_word_timings_by_scene, _build_story_text, _build_srt, write_continuous_narration
+from render_fairytale_video import load_inputs, make_contact_sheet, make_ambient, _audio_mix_filter, _scene_entries, _story_word_timings_by_scene, _build_story_text, _build_srt, write_continuous_narration
 
 
 class FairytaleVideoInputTests(unittest.TestCase):
