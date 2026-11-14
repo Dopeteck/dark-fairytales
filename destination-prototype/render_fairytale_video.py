@@ -29,6 +29,7 @@ for import_path in (str(REPO_ROOT), str(PROTOTYPE_DIR)):
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from moviepy.video.VideoClip import VideoClip
+from fairytale_planner import validate_episode_plan
 
 from captions import build_ass, word_timings
 from folklore_plan import validate_folklore_plan
@@ -67,7 +68,11 @@ def _safe_output_dir(path: Path) -> Path:
 
 def load_inputs(plan_path: Path, images_dir: Path):
     plan_raw = json.loads(plan_path.read_text(encoding="utf-8"))
-    plan = validate_folklore_plan(plan_raw)
+    plan = (
+        validate_episode_plan(plan_raw)
+        if plan_raw.get("format") == "dark_fairytale_episode_v1"
+        else validate_folklore_plan(plan_raw)
+    )
     manifest_path = images_dir / "generation-manifest.json"
     if not manifest_path.is_file():
         raise ValueError("Missing generation-manifest.json; refusing to render untracked images")
@@ -455,6 +460,9 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     metadata = {
         "title": plan["title"],
         "series": plan.get("series"),
+        "story_id": plan.get("story_id"),
+        "source": plan.get("source"),
+        "disclosure": plan.get("disclosure"),
         "model_strategy": generation_manifest.get("model_strategy", {}),
         "symbolic_final_scene_note": generation_manifest.get("symbolic_final_scene_note"),
         "scene_count": len(images),
@@ -478,6 +486,7 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
         "rendered_for_review": True,
         "fact_check_status": "requires human review before publication",
         "asset_review_status": "generated assets require human review before publication",
+        "daily_fairytale_pipeline": plan.get("format") == "dark_fairytale_episode_v1",
     }
     write_json(output_dir / "render-metadata.json", metadata)
     (output_dir / "PREVIEW-ONLY.txt").write_text(
