@@ -33,14 +33,14 @@ def valid_plan(story=None):
          "visual_identity": "An elderly traveller with a grey beard, brown coat and walking staff."},
     ]
     narrations = [
-        "Mira left her village before sunrise, carrying one small bag and a promise she hoped she could keep.",
-        "At the edge of the forest, she heard a voice calling from behind the old stone wall.",
-        "An old traveller stepped out and warned her that the shortcut was guarded by a dangerous creature.",
-        "Mira listened carefully, then noticed a narrow path hidden beneath the roots of an ancient tree.",
-        "She followed the path, but the creature heard her footsteps and blocked the bridge ahead.",
-        "The traveller returned and showed her how to use the bell hanging from the bridge's wooden post.",
-        "The sound startled the creature long enough for Mira to cross and reach the far side safely.",
-        "When she returned home, Mira kept her promise and told the village how the traveller had helped her.",
+        "Mira left her village before sunrise, carrying one small bag and a promise she hoped she could keep. She had never travelled alone.",
+        "At the edge of the forest, she heard a voice calling from behind the old stone wall. Someone seemed to know her name.",
+        "An old traveller stepped out and warned her that the shortcut was guarded by a dangerous creature that feared only one sound.",
+        "Mira listened carefully, then noticed a narrow path hidden beneath the roots of an ancient tree. It led towards the bridge.",
+        "She followed the path, but the creature heard her footsteps and blocked the bridge ahead. There was nowhere else to cross.",
+        "The traveller returned and showed her how to use the bell hanging from the bridge's wooden post. Its sound would frighten the creature.",
+        "The sound startled the creature long enough for Mira to cross and reach the far side safely. She thanked the traveller and hurried home.",
+        "When she returned home, Mira kept her promise and told the village how the traveller had helped her. The journey had changed her.",
     ]
     scenes = []
     for i, narration in enumerate(narrations, 1):
