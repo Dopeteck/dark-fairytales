@@ -77,6 +77,7 @@ class DailyFairytaleRunnerTests(unittest.TestCase):
             (output_dir / "contact-sheet.jpg").write_bytes(b"contact-sheet")
             metadata = {
                 "scene_count": 8, "chapter_overlays": False,
+                "opening": "full_bleed_scene_one_no_title_overlay",
                 "narration_word_count": plan["narration_word_count"],
                 "approved": False, "published": False,
                 "duration_seconds": 90.0, "resolution": "1080x1920",
