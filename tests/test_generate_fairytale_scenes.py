@@ -48,14 +48,14 @@ class GeneratorTests(unittest.TestCase):
              "visual_identity": "Elderly traveller with a grey beard, weathered brown coat and walking staff."},
         ]
         narration = [
-            "Mira left her village before sunrise, carrying one small bag and a promise she hoped she could keep.",
-            "At the forest edge she heard a voice calling her name from behind an old stone wall.",
+            "Mira left her village before sunrise, carrying one small bag and a promise she hoped she could keep. She had never travelled alone.",
+            "At the forest edge she heard a voice calling her name from behind an old stone wall. Someone seemed to know her, but no one was there.",
             "An elderly traveller warned her that a dangerous creature guarded the narrow bridge ahead, especially after sunset when the last daylight disappeared behind the hills.",
-            "Mira listened carefully and noticed a hidden path beneath the tangled roots of an ancient tree.",
-            "She followed the path, but the creature heard her footsteps and blocked the bridge with a roar.",
-            "The traveller returned and showed her how to ring the bell hanging from the wooden bridge post.",
-            "Its clear sound startled the creature long enough for Mira to cross and reach the far side safely.",
-            "When Mira returned home, she kept her promise and told the village how the traveller had helped her.",
+            "Mira listened carefully and noticed a narrow hidden path beneath the tangled roots of an ancient tree. It seemed to lead towards the bridge's far side.",
+            "She followed the path, but the creature heard her footsteps and blocked the bridge with a roar. There was nowhere else to cross safely.",
+            "The traveller returned and showed her how to ring the bell hanging from the wooden bridge post. Its strange clear sound would frighten the creature.",
+            "The sound startled the creature long enough for Mira to cross and reach the far side safely. She thanked the traveller and hurried towards home.",
+            "When she returned home, Mira kept her promise and told the village how the traveller had helped her. The journey had changed her forever.",
         ]
         raw = {
             "title": "The Hidden Path",
