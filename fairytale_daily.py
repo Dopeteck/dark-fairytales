@@ -102,6 +102,8 @@ def run(queue_path: Path, state_path: Path, output_root: Path,
         raise ValueError("Rendered metadata does not contain all eight scenes.")
     if metadata.get("chapter_overlays") is not False:
         raise ValueError("Chapter banners must remain disabled.")
+    if metadata.get("opening") != "full_bleed_scene_one_no_title_overlay":
+        raise ValueError("The video must open on the first full-bleed scene without a title card")
     if metadata.get("narration_word_count") != plan["narration_word_count"]:
         raise ValueError("Rendered narration word count differs from the validated story plan.")
     if metadata.get("approved") is not False or metadata.get("published") is not False:
