@@ -11,6 +11,7 @@ from PIL import Image
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "destination-prototype"))
 import generate_fairytale_scenes as generator
+from fairytale_planner import validate_episode_plan
 
 
 class GeneratorTests(unittest.TestCase):
@@ -30,6 +31,44 @@ class GeneratorTests(unittest.TestCase):
         Image.new("RGB", (832, 1472), (12, 34, 56)).save(buffer, format="JPEG", quality=82)
         self.image_bytes = buffer.getvalue()
         self.image_b64 = base64.b64encode(self.image_bytes).decode("ascii")
+
+    def _generic_plan(self):
+        story = {
+            "id": "test-tale", "title": "The Test Tale",
+            "synopsis": "A brave heroine faces a forest danger and returns safely.",
+            "key_beats": ["She leaves", "A stranger warns her", "She faces danger", "She returns", "The village is safe"],
+            "source": {"title": "Test Collection", "author": "Traditional",
+                       "url": "https://www.gutenberg.org/ebooks/11027",
+                       "edition_note": "Test edition."},
+        }
+        characters = [
+            {"id": "hero", "name": "Mira", "role": "heroine",
+             "visual_identity": "Young woman with a green cloak, long black braid and brown boots."},
+            {"id": "helper", "name": "Rowan", "role": "helper",
+             "visual_identity": "Elderly traveller with a grey beard, weathered brown coat and walking staff."},
+        ]
+        narration = [
+            "Mira left her village before sunrise, carrying one small bag and a promise she hoped she could keep.",
+            "At the forest edge she heard a voice calling her name from behind an old stone wall.",
+            "An elderly traveller warned her that a dangerous creature guarded the narrow bridge ahead.",
+            "Mira listened carefully and noticed a hidden path beneath the tangled roots of an ancient tree.",
+            "She followed the path, but the creature heard her footsteps and blocked the bridge with a roar.",
+            "The traveller returned and showed her how to ring the bell hanging from the wooden bridge post.",
+            "Its clear sound startled the creature long enough for Mira to cross and reach the far side safely.",
+            "When Mira returned home, she kept her promise and told the village how the traveller had helped her.",
+        ]
+        raw = {
+            "title": "The Hidden Path",
+            "logline": "A brave young woman finds a way through a dangerous forest.",
+            "characters": characters,
+            "scenes": [
+                {"title": f"Scene {i}", "narration": line,
+                 "visual_prompt": "Cinematic painterly storybook illustration showing the named characters in a dark forest beside an ancient stone bridge, with one clear visible action and dramatic moonlight.",
+                 "character_ids": ["hero"] if i not in {3, 6} else ["hero", "helper"]}
+                for i, line in enumerate(narration, 1)
+            ],
+        }
+        return validate_episode_plan(raw, story)
 
     def _reference_file(self, path: Path):
         Image.new("RGB", (510, 510), (90, 60, 35)).save(path, format="PNG")
@@ -103,6 +142,42 @@ class GeneratorTests(unittest.TestCase):
                 self.assertIn("input image 0 is Rumpelstiltskin", prompt)
                 self.assertIn("input image 1", prompt.lower())
                 self.assertIn("KNEECAP", prompt)
+
+    def test_generic_fairytale_prompt_uses_character_bible_without_rumpel_lock(self):
+        plan = self._generic_plan()
+        prompt = generator.build_episode_prompt(plan, plan["scenes"][0], 1)
+        self.assertIn("Mira", prompt)
+        self.assertIn("green cloak", prompt)
+        self.assertIn("Cinematic painterly storybook", prompt)
+        self.assertNotIn("Rumpelstiltskin", prompt)
+        self.assertLessEqual(len(prompt), 2048)
+
+    def test_generic_episode_scene_generation_needs_no_story_specific_references(self):
+        plan = self._generic_plan()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plan_path = root / "episode.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            output = root / "images"
+            original = generator.generate_one
+            generate_mock = Mock(return_value=self.image_bytes)
+            generator.generate_one = generate_mock
+            try:
+                manifest = generator.run(
+                    plan_path, output, "account", "token",
+                    only_scene="scene-01", pause_seconds=0,
+                )
+            finally:
+                generator.generate_one = original
+            self.assertEqual(manifest["scene_count"], 1)
+            item = manifest["images"][0]
+            self.assertEqual(item["model"], generator.MODEL_ID)
+            self.assertFalse(item["uses_character_reference"])
+            self.assertFalse(item["uses_scale_reference"])
+            self.assertFalse(item["model_fallback_used"])
+            self.assertEqual(generate_mock.call_count, 1)
+            self.assertIsNone(manifest["reference_image_sha256"])
+            self.assertTrue((output / "generation-manifest.json").is_file())
 
     def test_unknown_scene_fails_closed(self):
         with self.assertRaises(ValueError):
