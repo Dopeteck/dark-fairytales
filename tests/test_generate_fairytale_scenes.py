@@ -150,6 +150,7 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("green cloak", prompt)
         self.assertIn("Cinematic painterly storybook", prompt)
         self.assertNotIn("Rumpelstiltskin", prompt)
+        self.assertIn("repeated character copies", prompt)
         self.assertLessEqual(len(prompt), 2048)
 
     def test_generic_episode_scene_generation_needs_no_story_specific_references(self):
