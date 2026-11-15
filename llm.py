@@ -475,10 +475,19 @@ class JsonLLM:
                             raise ProviderHTTPError(
                                 status, body,
                                 f"Non-retryable HTTP {status} from {provider['name']}/{model}; All script providers failed fast") from exc
-                        # Schema/JSON validation gets one prompt correction, not an API retry.
+                        # Schema/JSON validation gets one prompt correction that
+                        # includes the specific failure reason instead of only
+                        # asking for valid JSON. The reason is bounded and cannot
+                        # contain provider secrets because validation runs locally.
                         if isinstance(exc, (ValueError, KeyError, TypeError)) and status is None:
                             if not corrected_prompt:
-                                correction = "\nReturn only a valid JSON object matching the requested schema. Correct the prior response."
+                                reason = str(exc).strip() or type(exc).__name__
+                                correction = (
+                                    "\nThe previous response failed validation: "
+                                    + reason[:300]
+                                    + ". Return only a valid JSON object matching the requested schema, "
+                                    + "addressing that specific failure. No markdown."
+                                )
                                 corrected_prompt = True
                                 continue
                             break
@@ -571,6 +580,73 @@ class DryRunLLM:
                 {"topic": f"Offline sample topic {index}", "research_question": "Which primary sources support this topic?"}
                 for index in range(1, count + 1)
             ]}
+        elif task == "source_analysis":
+            raw = {
+                "title": f"Source analysis of {str(prompt.get('story', {}).get('title', 'the tale'))}",
+                "central_conflict": "A central want meets an obstacle that forces a consequential choice.",
+                "characters": [{
+                    "id": "hero", "name": "The Heroine", "role": "protagonist",
+                    "motivation": "To keep a promise and reach safety.",
+                    "stakes": "Her promise and her safety.",
+                    "visual_identity": "A determined young woman in a green cloak.",
+                }, {
+                    "id": "guide", "name": "The Old Guide", "role": "mentor",
+                    "motivation": "To warn and help the heroine without taking her choice away.",
+                    "stakes": "Whether his warning is heeded.",
+                    "visual_identity": "An elderly traveller with a grey beard, coat and staff.",
+                }],
+                "key_reversals": ["The promised path is blocked", "A hidden way is discovered"],
+                "climax": "The heroine chooses the hidden way and crosses the danger.",
+                "resolution": "She reaches safety and keeps her promise.",
+                "tone": "Quiet, suspenseful, folkloric.",
+                "essential_beats": ["Departure", "The warning", "The blockage", "The crossing", "The return"],
+            }
+        elif task == "draft_episode":
+            story = prompt.get("story", {})
+            beats = story.get("ordered_key_beats", []) or ["The tale begins", "A choice is made", "The resolution"]
+            scenes = []
+            for index, beat in enumerate(beats, 1):
+                scenes.append({
+                    "id": f"beat-{index:02d}",
+                    "title": f"Beat {index}: {beat[:30]}",
+                    "narration": f"{beat}. The storyteller lets this moment land before moving on.",
+                    "visual_prompt": f"Cinematic painterly illustration of {beat}, dark fairy-tale storybook style.",
+                    "character_ids": ["hero", "guide"] if index in (2, len(beats)) else ["hero"],
+                    "source_beat": beat,
+                })
+            raw = {
+                "title": f"Retelling of {story.get('title', 'the tale')}",
+                "logline": "A compact dramatic retelling that follows the source beats.",
+                "characters": [
+                    {"id": "hero", "name": "The Heroine", "role": "protagonist",
+                     "visual_identity": "A determined young woman in a green cloak."},
+                    {"id": "guide", "name": "The Old Guide", "role": "mentor",
+                     "visual_identity": "An elderly traveller with a grey beard, coat and staff."},
+                ],
+                "scenes": scenes,
+            }
+        elif task == "story_critic":
+            criteria = ("hook","clarity","motivation","stakes","pacing","dialogue",
+                        "emotional","accuracy","omissions","payoff")
+            raw = {"verdict": "pass", "reasons": [],
+                   "assessment": {c: {"verdict": "strong", "comment": f"The draft handles {c} adequately."}
+                                for c in criteria},
+                   "revision_instructions": []}
+        elif task == "revise_episode":
+            raw = {
+                "title": f"Revised retelling of {str(prompt.get('story', {}).get('title', 'the tale'))}",
+                "logline": "A compact dramatic retelling that follows the source beats.",
+                "characters": [
+                    {"id": "hero", "name": "The Heroine", "role": "protagonist",
+                     "visual_identity": "A determined young woman in a green cloak."},
+                    {"id": "guide", "name": "The Old Guide", "role": "mentor",
+                     "visual_identity": "An elderly traveller with a grey beard, coat and staff."},
+                ],
+                "scenes": [{"id": f"scene-{i:02d}", "title": f"Scene {i}",
+                            "narration": "Revised narration for a source beat that lands with the listener.",
+                            "visual_prompt": "Cinematic painterly illustration, dark fairy-tale storybook style.",
+                            "character_ids": ["hero"], "source_beat": "a beat"} for i in range(1, 4)],
+            }
         else:
             raise ValueError(f"Dry-run has no canned reply for stage: {task}")
         return validate(raw)

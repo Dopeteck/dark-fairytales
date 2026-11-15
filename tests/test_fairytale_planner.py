@@ -78,11 +78,11 @@ class FairytalePlannerTests(unittest.TestCase):
         self.assertEqual(state["cycle"], 2)
         self.assertNotEqual(item["id"], selected[-1])
 
-    def test_episode_plan_contains_eight_scenes_and_complete_narration(self):
+    def test_episode_plan_supports_variable_scene_count_and_word_count(self):
         story = queue_story()
         plan = validate_episode_plan(valid_plan(story), story)
         self.assertEqual(plan["format"], "dark_fairytale_episode_v1")
-        self.assertEqual(len(plan["scenes"]), 8)
+        self.assertGreaterEqual(len(plan["scenes"]), 1)
         self.assertEqual(plan["narration_word_count"], len(plan["narration"].split()))
         self.assertFalse(plan["approved"])
         self.assertFalse(plan["published"])
@@ -96,8 +96,8 @@ class FairytalePlannerTests(unittest.TestCase):
 
     def test_episode_plan_rejects_missing_scene_or_unknown_character(self):
         raw = valid_plan()
-        raw["scenes"].pop()
-        with self.assertRaisesRegex(ValueError, "exactly eight"):
+        raw["scenes"] = []
+        with self.assertRaisesRegex(ValueError, "at least one scene"):
             validate_episode_plan(raw, queue_story())
         raw = valid_plan()
         raw["scenes"][0]["character_ids"] = ["ghost"]

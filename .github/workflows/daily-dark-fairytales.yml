@@ -1,17 +1,35 @@
 name: Daily Dark Fairytales
 
 on:
-  # One branch-scoped end-to-end run for validation before any merge.
-  # This deliberately does not trigger on main or publish/deliver anything.
+  # Branch-scoped end-to-end validation for the Dark Fairytales pipeline.
+  # Runs on pushes to the feature branch that touch the pipeline itself, so
+  # ordinary code changes (planner, renderer, scene generator, queue, tests,
+  # dependencies) are validated before any merge. This deliberately does not
+  # publish or deliver anything.
   push:
     branches:
       - feature/dark-folklore-shorts
     paths:
       - .github/workflows/daily-dark-fairytales.yml
+      - fairytale_daily.py
+      - fairytale_planner.py
+      - destination-prototype/generate_fairytale_scenes.py
+      - destination-prototype/render_fairytale_video.py
+      - llm.py
+      - config.py
+      - fairytale_queue.json
+      - requirements.txt
+      - requirements-render.txt
+      - requirements-voice.txt
+      - tests/**
   schedule:
-    # 09:00 Africa/Lagos (UTC+1)
+    # 09:00 Africa/Lagos (UTC+1). GitHub scheduled workflows run against the
+    # repository's default branch only, so this cron does NOT operate daily on
+    # the unmerged feature branch. It becomes active only after a separate
+    # merge to main is explicitly authorized.
     - cron: "0 8 * * *"
   workflow_dispatch:
+    # Controlled, provider-backed end-to-end tests on demand. No auto-publish.
     inputs:
       voice:
         description: "Kokoro storyteller voice"

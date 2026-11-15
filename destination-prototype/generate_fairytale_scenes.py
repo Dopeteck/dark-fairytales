@@ -25,6 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from fairytale_planner import validate_episode_plan
+from shot_planner import build_shot_plan, shot_prompt
+from visual_qa import review_image
 
 MODEL_ID = "@cf/black-forest-labs/flux-2-klein-4b"
 RUMPELSTILTSKIN_MODEL_ID = "@cf/black-forest-labs/flux-2-klein-9b"
@@ -313,11 +315,15 @@ def run(
     only_scene: str | None = None,
     pause_seconds: float = 1.0,
     resume: bool = False,
+    shot_budget: int | None = None,
 ) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     generic_episode = plan.get("format") == "dark_fairytale_episode_v1"
     if generic_episode:
         plan = validate_episode_plan(plan)
+        shot_plan = build_shot_plan(plan, budget=shot_budget)
+        bible = shot_plan["characters"]
+        style = str(shot_plan.get("visual_style", STYLE_BIBLE))
     scenes = plan.get("scenes", [])
     if not scenes:
         raise ValueError("The story plan contains no scenes")
@@ -370,12 +376,21 @@ def run(
         "published": False,
         "reference_image_sha256": hashlib.sha256(reference_bytes).hexdigest() if reference_bytes else None,
         "scale_reference_sha256": hashlib.sha256(scale_reference_bytes).hexdigest() if scale_reference_bytes else None,
+        "shot_plan": shot_plan if generic_episode else None,
+        "shot_budget": shot_plan.get("shot_budget") if generic_episode else None,
         "images": [],
     }
 
     for index, scene in enumerate(scenes, 1):
         scene_id = str(scene["id"])
-        prompt = build_episode_prompt(plan, scene, index) if generic_episode else build_prompt(scene, index)
+        shot = None
+        if generic_episode:
+            shot = next((s for s in shot_plan["shots"] if str(s.get("scene_id")) == scene_id), None)
+            if shot is None:
+                raise ValueError(f"No shot planned for scene {scene_id!r}")
+            prompt = shot_prompt(shot, bible, style, NEGATIVE_GUIDANCE)
+        else:
+            prompt = build_prompt(scene, index)
         is_character_scene = (not generic_episode) and scene_id in RUMPELSTILTSKIN_SCENES
         scene_reference = reference_bytes if is_character_scene else None
         scene_scale_reference = scale_reference_bytes if is_character_scene else None
@@ -435,6 +450,9 @@ def run(
             path.write_bytes(data)
             resumed = False
 
+        shot_dict = shot if generic_episode else {}
+        quality = review_image(data, shot_dict)
+
         manifest["images"].append({
             "scene_id": scene_id,
             "title": scene.get("title", scene_id),
@@ -451,6 +469,11 @@ def run(
             "uses_character_reference": scene_reference is not None,
             "uses_scale_reference": scene_scale_reference is not None,
             "resumed_from_partial_run": resumed,
+            "shot_type": shot_dict.get("shot_type"),
+            "shot_framing": shot_dict.get("framing"),
+            "quality_status": quality["status"],
+            "quality_technical": quality["technical"],
+            "quality_semantic": quality["semantic"],
             "approved": False,
         })
         manifest["scene_count"] = len(manifest["images"])

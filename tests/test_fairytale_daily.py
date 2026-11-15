@@ -1,11 +1,12 @@
 import json
 import tempfile
 import unittest
+from contextlib import chdir
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import fairytale_daily
-from fairytale_planner import initial_state, validate_episode_plan
+from fairytale_planner import validate_episode_plan
 
 
 def sample_story(story_id="test-story"):
@@ -51,7 +52,8 @@ def sample_plan(story):
 
 
 class DailyFairytaleRunnerTests(unittest.TestCase):
-    def _run_with_mocks(self, root: Path, fail_render: bool = False):
+    def _run_with_mocks(self, root: Path, fail_render: bool = False,
+                        output_root: Path | None = None):
         queue_story = sample_story()
         (root / "fairytale_queue.json").write_text(json.dumps({
             "schema_version": 1, "stories": [queue_story] + [sample_story(f"filler-{i}") for i in range(1, 8)]
@@ -60,7 +62,7 @@ class DailyFairytaleRunnerTests(unittest.TestCase):
 
         def fake_generate_scenes(**kwargs):
             return {
-                "scene_count": 8, "images": [{} for _ in range(8)],
+                "scene_count": len(plan["scenes"]), "images": [{} for _ in range(len(plan["scenes"]))],
                 "approved": False, "published": False,
             }
 
@@ -76,7 +78,7 @@ class DailyFairytaleRunnerTests(unittest.TestCase):
             )
             (output_dir / "contact-sheet.jpg").write_bytes(b"contact-sheet")
             metadata = {
-                "scene_count": 8, "chapter_overlays": False,
+                "scene_count": len(plan["scenes"]), "chapter_overlays": False,
                 "opening": "full_bleed_scene_one_no_title_overlay",
                 "narration_word_count": plan["narration_word_count"],
                 "approved": False, "published": False,
@@ -97,11 +99,13 @@ class DailyFairytaleRunnerTests(unittest.TestCase):
              patch.object(fairytale_daily, "JsonLLM", return_value=Mock()), \
              patch.object(fairytale_daily, "generate_episode", return_value=plan), \
              patch.object(fairytale_daily, "generate_scenes", side_effect=fake_generate_scenes), \
-             patch.object(fairytale_daily, "render", side_effect=fake_render):
+             patch.object(fairytale_daily, "render", side_effect=fake_render), \
+             patch.object(fairytale_daily, "review_episode",
+                          return_value={"review_ready": True, "weaknesses": [], "checks": {}}):
             return fairytale_daily.run(
                 root / "fairytale_queue.json",
                 root / "state" / "fairytale_rotation.json",
-                root / "output",
+                output_root if output_root is not None else root / "output",
                 env=env,
             )
 
@@ -123,6 +127,34 @@ class DailyFairytaleRunnerTests(unittest.TestCase):
                 self._run_with_mocks(root, fail_render=True)
             state_path = root / "state" / "fairytale_rotation.json"
             self.assertFalse(state_path.exists())
+
+    def test_review_summary_paths_are_repository_relative_for_absolute_output_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self._run_with_mocks(root)
+            for key in ("video", "contact_sheet", "captions"):
+                value = result[key]
+                self.assertFalse(Path(value).is_absolute(), f"{key} must be relative: {value}")
+                resolved = (root / value).resolve()
+                self.assertTrue(resolved.is_file(), f"{key} must resolve to a real file: {value}")
+
+    def test_review_summary_paths_are_repository_relative_for_relative_output_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with chdir(root):
+                result = self._run_with_mocks(root, output_root=Path("output"))
+            for key in ("video", "contact_sheet", "captions"):
+                value = result[key]
+                self.assertFalse(Path(value).is_absolute(), f"{key} must be relative: {value}")
+                resolved = (root / value).resolve()
+                self.assertTrue(resolved.is_file(), f"{key} must resolve to a real file: {value}")
+
+    def test_review_summary_rejects_output_outside_repository_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = Path(tempfile.mkdtemp()) / "outside" / "output"
+            with self.assertRaisesRegex(ValueError, "outside the repository root"):
+                self._run_with_mocks(root, output_root=outside)
 
 
 if __name__ == "__main__":

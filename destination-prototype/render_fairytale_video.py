@@ -39,7 +39,10 @@ from story_store import write_json
 FPS = 30
 WIDTH, HEIGHT = 1080, 1920
 CROSSFADE_SECONDS = 0.38
-TARGET_MIN, TARGET_MAX = 75.0, 115.0
+# The story's natural spoken duration sets the runtime. These are soft review
+# targets, not a fixed length the narration is forced into.
+SOFT_MIN, SOFT_MAX = 45.0, 150.0
+ABS_MAX_SECONDS = 600.0
 
 
 @lru_cache(maxsize=32)
@@ -302,8 +305,11 @@ def _probe(path: Path) -> dict:
     duration = float(data["format"]["duration"])
     if (video.get("width"), video.get("height"), video.get("r_frame_rate")) != (WIDTH, HEIGHT, "30/1"):
         raise ValueError(f"Wrong video format: {video}")
-    if not TARGET_MIN <= duration <= TARGET_MAX:
-        raise ValueError(f"Rendered duration {duration:.2f}s is outside {TARGET_MIN:.0f}–{TARGET_MAX:.0f}s")
+    if duration > ABS_MAX_SECONDS:
+        raise ValueError(f"Rendered duration {duration:.2f}s is above the {ABS_MAX_SECONDS:.0f}s absolute maximum")
+    if not SOFT_MIN <= duration <= SOFT_MAX:
+        print(f"Note: rendered duration {duration:.2f}s is outside the "
+              f"{SOFT_MIN:.0f}–{SOFT_MAX:.0f}s soft review band.")
     return {"duration_seconds": duration, "video_stream": video, "audio_stream": audio}
 
 
@@ -339,25 +345,17 @@ def render(plan_path: Path, images_dir: Path, output_dir: Path, voice: str, spee
     # a TTS-side tokenizer that may normalise or omit punctuation-bound words.
     narration_row["words"] = _story_word_timings_by_scene(plan["scenes"], float(narration_row["duration"]))
 
-    if not TARGET_MIN <= expected_total <= TARGET_MAX:
-        target_seconds = 92.0
-        corrected_speed = max(0.78, min(1.25, speed * expected_total / target_seconds))
-        if abs(corrected_speed - speed) < 0.015:
-            raise ValueError(
-                f"Continuous Kokoro narration is {expected_total:.2f}s, outside the "
-                f"{TARGET_MIN:.0f}–{TARGET_MAX:.0f}s review range"
-            )
-        print(f"Adjusting continuous Kokoro pace from {speed:.2f} to {corrected_speed:.2f}")
-        narrator = Narrator(voice, corrected_speed)
-        narration_row = narrator.synthesize(story_text, cache)
-        expected_total = float(narration_row["duration"])
-        narration_row["words"] = _story_word_timings_by_scene(plan["scenes"], float(narration_row["duration"]))
-        speed = corrected_speed
-        if not TARGET_MIN <= expected_total <= TARGET_MAX:
-            raise ValueError(
-                f"Adjusted continuous narration is {expected_total:.2f}s, outside the "
-                f"{TARGET_MIN:.0f}–{TARGET_MAX:.0f}s review range"
-            )
+    # The story's natural spoken duration sets the runtime. Kokoro is never
+    # sped up or slowed down merely to force a fixed length. A soft review
+    # band is reported; only a runaway duration is rejected.
+    if expected_total > ABS_MAX_SECONDS:
+        raise ValueError(
+            f"Continuous Kokoro narration is {expected_total:.2f}s, above the "
+            f"{ABS_MAX_SECONDS:.0f}s absolute maximum for a short"
+        )
+    if not SOFT_MIN <= expected_total <= SOFT_MAX:
+        print(f"Note: continuous narration is {expected_total:.2f}s, outside the "
+              f"{SOFT_MIN:.0f}–{SOFT_MAX:.0f}s soft review band; keeping the natural pace.")
 
     entries = _scene_entries(plan["scenes"], narration_row["words"], 0.0)
     total = expected_total
