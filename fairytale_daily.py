@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from datetime import date, datetime, timezone
+from datetime import date
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -165,6 +165,9 @@ def run(queue_path: Path, state_path: Path, output_root: Path,
         "story_id": selected["id"],
         "title": plan["title"],
         "episode_date": episode_date,
+        "run_id": str(run_id),
+        "run_attempt": str(run_attempt),
+        "episode_key": episode_key,
         "source": plan["source"],
         "video": _repository_relative(video_path),
         "contact_sheet": _repository_relative(review_dir / "contact-sheet.jpg"),
@@ -183,16 +186,50 @@ def run(queue_path: Path, state_path: Path, output_root: Path,
     }
     write_json(episode_dir / "review-summary.json", summary)
 
+    # Persist traceability artifacts for human review.
+    shot_plan = manifest.get("shot_plan")
+    if shot_plan:
+        write_json(review_dir / "shot-plan.json", shot_plan)
+    character_bible = shot_plan.get("characters") if shot_plan else None
+    if character_bible:
+        write_json(review_dir / "character-bible.json", character_bible)
+    visual_qa_report = {
+        "episode_key": episode_key,
+        "story_id": selected["id"],
+        "run_id": str(run_id),
+        "run_attempt": str(run_attempt),
+        "images": [
+            {
+                "scene_id": row.get("scene_id"),
+                "file": row.get("file"),
+                "quality_status": row.get("quality_status"),
+                "quality_technical": row.get("quality_technical"),
+                "quality_semantic": row.get("quality_semantic"),
+                "shot_type": row.get("shot_type"),
+                "shot_framing": row.get("shot_framing"),
+            }
+            for row in manifest.get("images", [])
+        ],
+    }
+    write_json(review_dir / "visual-qa-report.json", visual_qa_report)
+
     qa_report = review_episode(episode_dir, plan, manifest, metadata)
     if not qa_report["review_ready"]:
         # Do not mark the episode complete; preserve every partial output so the
         # failure is inspectable. Surface concrete weaknesses, never secrets.
         raise ValueError(
-            f"Episode failed quality-assurance gates: "
+            "Episode failed quality-assurance gates: "
             + "; ".join(qa_report["weaknesses"] or [qa_report["checks"]])
         )
+    qa_report["episode_key"] = episode_key
+    qa_report["run_id"] = str(run_id)
+    qa_report["run_attempt"] = str(run_attempt)
     summary["qa_report"] = qa_report
     write_json(episode_dir / "review-summary.json", summary)
+
+    # Persist the final, critic-approved plan with editorial provenance.
+    write_json(plan_path, plan)
+    write_json(review_dir / "episode-plan.json", plan)
 
     completed_state = record_success(pending_state, selected, episode_date, str(run_id))
     state_path.parent.mkdir(parents=True, exist_ok=True)

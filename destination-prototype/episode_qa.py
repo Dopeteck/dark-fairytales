@@ -73,6 +73,7 @@ def review_episode(episode_dir: Path, plan: dict[str, Any],
     # --- Creative / editorial ---
     narration = str(plan.get("narration", ""))
     disclosure = str(plan.get("disclosure", ""))
+    story_id = str(plan.get("story_id", ""))
     gate("story_editorial_passed", bool(plan.get("scenes")) and bool(narration),
          f"{len(plan.get('scenes', []))} scenes, {plan.get('narration_word_count', 0)} words",
          "No scenes or narration; editorial review did not produce a usable episode.")
@@ -82,6 +83,59 @@ def review_episode(episode_dir: Path, plan: dict[str, Any],
     gate("disclosure_disclosed", "AI-illustrated" in disclosure and "retelling" in disclosure,
          disclosure[:120],
          "Disclosure does not identify an AI-illustrated retelling of its source.")
+
+    # --- Editorial critic provenance (the real gate, not a boolean flag) ---
+    source_analysis = plan.get("source_analysis")
+    critic = plan.get("critic_assessment")
+    editorial_gate = plan.get("editorial_gate", {})
+    revisions = plan.get("editorial_revisions", [])
+    if not isinstance(revisions, list):
+        revisions = []
+
+    gate("source_analysis_exists", isinstance(source_analysis, dict) and bool(source_analysis),
+         "source analysis present",
+         "No source analysis; the story was not analyzed before drafting.")
+    gate("source_analysis_has_conflict", bool(
+        source_analysis and source_analysis.get("central_conflict")),
+         "central conflict documented",
+         "Source analysis is missing the central conflict.")
+    gate("source_analysis_has_resolution", bool(
+        source_analysis and source_analysis.get("resolution")),
+         "resolution documented",
+         "Source analysis is missing the resolution.")
+    gate("critic_assessment_exists", isinstance(critic, dict) and bool(critic),
+         "critic assessment present",
+         "No editorial critic assessment; image generation must not proceed without critic approval.")
+    gate("critic_verdict_pass", isinstance(critic, dict) and str(critic.get("verdict")) == "pass",
+         f"verdict={critic.get('verdict') if isinstance(critic, dict) else type(critic).__name__}",
+         "Critic verdict is not 'pass'; rejected stories cannot proceed to rendering.")
+    gate("critic_belongs_to_episode", isinstance(critic, dict) and str(critic.get("story_id")) == story_id,
+         f"assessment story_id={critic.get('story_id') if isinstance(critic, dict) else type(critic).__name__} "
+         f"episode story_id={story_id or '<missing>'}",
+         "Critic assessment does not belong to this episode (stale or mismatched assessment).")
+    gate("critic_has_run_id", isinstance(critic, dict) and str(critic.get("generated_for_episode")) == story_id,
+         "assessment tied to this episode",
+         "Critic assessment was not generated for this episode.")
+    criteria = ("hook", "clarity", "motivation", "stakes", "pacing", "dialogue",
+                "emotional", "accuracy", "omissions", "payoff")
+    critic_criteria = critic.get("assessment", {}) if isinstance(critic, dict) else {}
+    missing_criteria = [
+        c for c in criteria
+        if c not in critic_criteria or not str(critic_criteria[c].get("comment", "")).strip()
+    ]
+    gate("critic_criteria_complete", not missing_criteria,
+         f"{len(critic_criteria)}/{len(criteria)} criteria assessed",
+         f"Missing or empty critic criteria: {', '.join(missing_criteria)}"
+         if missing_criteria else None)
+    gate("editorial_gate_consistent", str(editorial_gate.get("story_id")) == story_id
+         and str(editorial_gate.get("verdict")) == "pass"
+         and str(editorial_gate.get("critic_verdict")) == "pass",
+         f"gate verdict={editorial_gate.get('verdict')} story_id={editorial_gate.get('story_id')}",
+         "Editorial gate metadata is missing or inconsistent with the plan.")
+    if revisions:
+        gate("editorial_revisions_preserved", len(revisions) > 0,
+             f"{len(revisions)} revision round(s) recorded",
+             "Revision history is missing although revisions occurred.")
 
     # --- Voice track ---
     voice = metadata.get("voice")

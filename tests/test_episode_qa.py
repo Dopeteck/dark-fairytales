@@ -36,6 +36,44 @@ def _base_plan(scenes_count=3):
         "scenes": scenes,
         "disclosure": "An AI-illustrated dramatic retelling based on the cited source.",
         "approved": False, "published": False,
+        "source_analysis": {
+            "central_conflict": "A central want meets an obstacle.",
+            "resolution": "The heroine reaches safety.",
+            "characters": [],
+            "key_reversals": [],
+            "climax": "The climax.",
+            "tone": "Folkloric.",
+            "essential_beats": ["beat 1", "beat 2"],
+        },
+        "critic_assessment": {
+            "verdict": "pass",
+            "reasons": [],
+            "story_id": "test-tale",
+            "generated_for_episode": "test-tale",
+            "generated_at": "2026-11-15T00:00:00Z",
+            "assessment": {
+                "hook": {"verdict": "strong", "comment": "Opens inside the trouble."},
+                "clarity": {"verdict": "clear", "comment": "Narrative is easy to follow."},
+                "motivation": {"verdict": "clear", "comment": "Character wants are evident."},
+                "stakes": {"verdict": "high", "comment": "Safety is at stake."},
+                "pacing": {"verdict": "well-paced", "comment": "Escalation is steady."},
+                "dialogue": {"verdict": "natural", "comment": "Dialogue sounds spoken."},
+                "emotional": {"verdict": "engaging", "comment": "Emotional beats land."},
+                "accuracy": {"verdict": "accurate", "comment": "Follows the source edition."},
+                "omissions": {"verdict": "none", "comment": "No essential beats omitted."},
+                "payoff": {"verdict": "satisfying", "comment": "Ending delivers a payoff."},
+            },
+            "revision_instructions": [],
+        },
+        "editorial_gate": {
+            "verdict": "pass",
+            "story_id": "test-tale",
+            "critic_verdict": "pass",
+            "source_analysis_complete": True,
+            "criteria_count": 10,
+            "revision_count": 0,
+            "gate_passed_at": "2026-11-15T00:00:00Z",
+        },
     }
 
 
@@ -133,6 +171,84 @@ class EpisodeQATests(unittest.TestCase):
         report = review_qa(root, plan, manifest, metadata)
         self.assertFalse(report["review_ready"])
         self.assertTrue(any("Disclosure" in w for w in report["weaknesses"]))
+
+    # --- Editorial critic provenance gates ---
+
+    def test_missing_source_analysis_fails(self):
+        root, plan, manifest, metadata = self._episode_dir()
+        del plan["source_analysis"]
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertFalse(report["review_ready"])
+        self.assertTrue(any("source_analysis_exists" in w or "No source analysis" in w
+                            for w in report["weaknesses"]))
+
+    def test_missing_critic_assessment_fails(self):
+        root, plan, manifest, metadata = self._episode_dir()
+        del plan["critic_assessment"]
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertFalse(report["review_ready"])
+        self.assertTrue(any("critic_assessment_exists" in w or "No editorial critic" in w
+                            for w in report["weaknesses"]))
+
+    def test_rejected_critic_verdict_fails(self):
+        root, plan, manifest, metadata = self._episode_dir()
+        plan["critic_assessment"]["verdict"] = "reject"
+        plan["critic_assessment"]["reasons"] = ["Weak hook", "Unclear motivation"]
+        plan["editorial_gate"]["verdict"] = "reject"
+        plan["editorial_gate"]["critic_verdict"] = "reject"
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertFalse(report["review_ready"])
+        self.assertTrue(any("critic_verdict_pass" in w or "not 'pass'" in w
+                            for w in report["weaknesses"]))
+
+    def test_malformed_critic_assessment_fails(self):
+        root, plan, manifest, metadata = self._episode_dir()
+        plan["critic_assessment"] = "not-a-dict"
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertFalse(report["review_ready"])
+        self.assertTrue(any("No editorial critic" in w for w in report["weaknesses"]))
+
+    def test_missing_critic_criteria_fails(self):
+        root, plan, manifest, metadata = self._episode_dir()
+        plan["critic_assessment"]["assessment"] = {
+            "hook": {"verdict": "strong", "comment": "Good hook."},
+        }
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertFalse(report["review_ready"])
+        self.assertTrue(any("critic_criteria_complete" in w or "Missing or empty" in w
+                            for w in report["weaknesses"]))
+
+    def test_empty_critic_criterion_comment_fails(self):
+        root, plan, manifest, metadata = self._episode_dir()
+        plan["critic_assessment"]["assessment"]["payoff"] = {"verdict": "satisfying", "comment": ""}
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertFalse(report["review_ready"])
+        self.assertTrue(any("Missing or empty" in w for w in report["weaknesses"]))
+
+    def test_stale_critic_assessment_different_story_fails(self):
+        root, plan, manifest, metadata = self._episode_dir()
+        plan["critic_assessment"]["story_id"] = "other-story"
+        plan["critic_assessment"]["generated_for_episode"] = "other-story"
+        plan["editorial_gate"]["story_id"] = "other-story"
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertFalse(report["review_ready"])
+        self.assertTrue(any("stale or mismatched" in w or "inconsistent with the plan" in w
+                            for w in report["weaknesses"]))
+
+    def test_editorial_gate_inconsistent_fails(self):
+        root, plan, manifest, metadata = self._episode_dir()
+        plan["editorial_gate"]["verdict"] = "fail"
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertFalse(report["review_ready"])
+        self.assertTrue(any("inconsistent with the plan" in w for w in report["weaknesses"]))
+
+    def test_valid_passing_assessment_passes(self):
+        root, plan, manifest, metadata = self._episode_dir()
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertTrue(report["review_ready"])
+        self.assertFalse(report["approved"])
+        self.assertFalse(report["published"])
+        self.assertEqual(report["weaknesses"], [])
 
 
 if __name__ == "__main__":

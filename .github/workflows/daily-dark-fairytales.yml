@@ -13,11 +13,19 @@ on:
       - .github/workflows/daily-dark-fairytales.yml
       - fairytale_daily.py
       - fairytale_planner.py
-      - destination-prototype/generate_fairytale_scenes.py
-      - destination-prototype/render_fairytale_video.py
+      - story_store.py
+      - story.py
+      - captions.py
+      - tts.py
+      - folklore_plan.py
       - llm.py
       - config.py
       - fairytale_queue.json
+      - destination-prototype/generate_fairytale_scenes.py
+      - destination-prototype/render_fairytale_video.py
+      - destination-prototype/episode_qa.py
+      - destination-prototype/shot_planner.py
+      - destination-prototype/visual_qa.py
       - requirements.txt
       - requirements-render.txt
       - requirements-voice.txt

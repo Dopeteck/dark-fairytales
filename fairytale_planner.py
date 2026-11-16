@@ -457,11 +457,16 @@ def generate_episode(story: dict, llm) -> dict:
 
     Stages: source analysis -> draft -> critic review -> (optional revise -> re-review).
     Image generation must not begin until the story passes the critic.
+
+    The returned plan carries the full editorial provenance so that downstream
+    QA can audit that this exact draft was independently approved before any
+    image was generated.
     """
     max_revisions = int(os.environ.get("FAIRYTALE_MAX_REVISIONS", "2"))
     source_analysis = analyze_source(story, llm)
     draft = draft_episode(story, source_analysis, llm)
     assessment = critic_review(draft, story, llm)
+    revision_history = []
     revisions = 0
     while assessment["verdict"] == "reject":
         if revisions >= max_revisions:
@@ -469,11 +474,40 @@ def generate_episode(story: dict, llm) -> dict:
                 f"Story '{story['title']}' failed editorial review after {max_revisions} "
                 f"revision attempts: {'; '.join(assessment['reasons'])}"
             )
+        revision_history.append({
+            "revision_number": revisions + 1,
+            "assessment": assessment,
+            "revision_instructions": assessment.get("revision_instructions", []),
+        })
         draft = revise_episode(draft, assessment, story, llm)
         assessment = critic_review(draft, story, llm)
         revisions += 1
     if assessment["verdict"] != "pass":
         raise ValueError(f"Story '{story['title']}' did not pass editorial review")
+
+    # Persist editorial provenance after all validation is complete. These
+    # fields are not re-validated by validate_episode_plan; they are audited
+    # separately by the episode QA gate.
+    now = datetime.now(timezone.utc).isoformat()
+    assessment["story_id"] = story["id"]
+    assessment["generated_for_episode"] = story["id"]
+    assessment["generated_at"] = now
+    draft["source_analysis"] = source_analysis
+    draft["critic_assessment"] = assessment
+    draft["editorial_revisions"] = revision_history
+    draft["editorial_gate"] = {
+        "verdict": "pass",
+        "story_id": story["id"],
+        "critic_verdict": "pass",
+        "source_analysis_complete": bool(
+            source_analysis
+            and source_analysis.get("central_conflict")
+            and source_analysis.get("resolution")
+        ),
+        "criteria_count": len(assessment.get("assessment", {})),
+        "revision_count": revisions,
+        "gate_passed_at": now,
+    }
     return draft
 
 
