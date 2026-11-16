@@ -17,12 +17,51 @@ import config
 log = logging.getLogger(__name__)
 _BODY_LIMIT = 1200
 
+# Maximum total time (seconds) the LLM stage may spend across all providers.
+# Kept intentionally conservative so a single tale does not monopolize a run.
+STAGE_TIME_BUDGET_SECONDS = 120
+
+# Exponential backoff base delay (seconds) for retryable provider errors.
+BACKOFF_BASE_SECONDS = 1.0
+BACKOFF_MAX_SECONDS = 16.0
+
+# One targeted repair attempt is allowed per provider/model for schema
+# validation failures. Provider HTTP retries are separate and do not consume
+# this repair allowance.
+MAX_REPAIR_ATTEMPTS = 1
+
+# Maximum provider-level HTTP retries per model for transient errors.
+MAX_PROVIDER_RETRIES = 1
+
 
 class ProviderHTTPError(RuntimeError):
-    def __init__(self, status: int | None, body: str = "", message: str = "provider request failed"):
+    def __init__(self, status: int | None, body: str = "", message: str = "provider request failed",
+                 retryable: bool | None = None):
         super().__init__(message)
         self.status_code = status
         self.response_body = body[:_BODY_LIMIT]
+        if retryable is None:
+            self.retryable = isinstance(status, int) and status in {429, 500, 502, 503, 504}
+        else:
+            self.retryable = retryable
+
+
+class StageError(RuntimeError):
+    """A failure that belongs to a specific pipeline stage (not an editorial
+    revision). Provider errors, schema validation failures and malformed
+    responses are stage errors; critic rejections are editorial and handled
+    separately by generate_episode."""
+
+    def __init__(self, stage: str, message: str, *, provider: str | None = None,
+                 model: str | None = None, status: int | None = None,
+                 body: str = "", retryable: bool = False):
+        super().__init__(message)
+        self.stage = stage
+        self.provider = provider
+        self.model = model
+        self.status = status
+        self.body = body[:_BODY_LIMIT]
+        self.retryable = retryable
 
 
 def _redact(value: Any) -> str:
@@ -40,9 +79,11 @@ def _safe(value: Any) -> str:
     return _redact(value)[:_BODY_LIMIT]
 
 
-def _error_details(exc: Exception) -> tuple[int | None, str]:
+def _error_details(exc: Exception) -> tuple[int | None, str, bool]:
+    """Return (status, body, retryable) from a provider exception."""
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     response = getattr(exc, "response", None)
+    retryable = False
     if response is not None:
         status = status or getattr(response, "status_code", None)
         try:
@@ -51,11 +92,16 @@ def _error_details(exc: Exception) -> tuple[int | None, str]:
             body = ""
         if not body:
             body = getattr(exc, "body", "") or ""
+        if isinstance(status, int) and status in {429, 500, 502, 503, 504}:
+            retryable = True
     else:
         body = getattr(exc, "body", "") or getattr(exc, "response_body", "") or ""
     if isinstance(body, (dict, list)):
         body = json.dumps(body, ensure_ascii=False)
-    return (int(status) if str(status).isdigit() else None, _safe(body))
+    # Header-based retry signals are surfaced inside the body text by the SDK.
+    if isinstance(status, int) and status in {429, 500, 502, 503, 504}:
+        retryable = True
+    return (int(status) if str(status).isdigit() else None, _safe(body), retryable)
 
 
 def _retry_after_seconds(message: str) -> float | None:
@@ -66,23 +112,38 @@ def _retry_after_seconds(message: str) -> float | None:
     if not match:
         return None
     try:
-        return min(20.0, max(0.0, float(match.group(1)) + 1.0))
+        return min(BACKOFF_MAX_SECONDS, max(0.0, float(match.group(1)) + 1.0))
     except (TypeError, ValueError, OverflowError):
         return None
 
 
-def _log_failure(provider: str, model: str, exc: Exception) -> tuple[int | None, str]:
-    status, body = _error_details(exc)
-    # Avoid logging exception objects directly: SDK exception strings may contain secrets.
+def _exponential_backoff(attempt: int, *, stated_delay: float | None = None) -> float:
+    """Exponential backoff with jitter, capped at BACKOFF_MAX_SECONDS.
+
+    If the provider stated a retry-after delay, honor it exactly (no jitter)
+    so tests can assert precise delays. Otherwise use base * 2^attempt plus
+    bounded jitter.
+    """
+    if stated_delay is not None:
+        return min(BACKOFF_MAX_SECONDS, stated_delay)
+    raw = BACKOFF_BASE_SECONDS * (2 ** attempt)
+    jitter = random.uniform(0, min(1.0, raw * 0.25))
+    return min(BACKOFF_MAX_SECONDS, raw + jitter)
+
+
+def _log_failure(provider: str, model: str, exc: Exception) -> tuple[int | None, str, bool]:
+    """Log a provider failure without exposing secrets; return (status, body, retryable)."""
+    status, body, retryable = _error_details(exc)
     trace = _redact(traceback.format_exc())
-    log.error("Provider %s model %s failed: type=%s message=%s HTTP status=%s body=%s\n%s",
-              provider, model, type(exc).__name__, _safe(exc), status, body or "<empty>", trace)
-    return status, body
+    log.error("Provider %s model %s failed: type=%s message=%s HTTP status=%s body=%s retryable=%s\n%s",
+              provider, model, type(exc).__name__, _safe(exc), status, body or "<empty>",
+              retryable, trace)
+    return status, body, retryable
 
 
 def extract_json(raw: str) -> dict:
     """Extract a JSON object and reject provider error envelopes even on HTTP 200."""
-    raw = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S | re.I)
+    raw = re.sub(r"\x1b\[[0-9;]*m", "", raw or "", flags=re.S | re.I)
     decoder = json.JSONDecoder()
     for match in re.finditer(r"\{", raw):
         try:
@@ -113,8 +174,10 @@ def _stage_from_user(user: str) -> str:
 def _json_schema_for_stage(stage: str) -> dict | None:
     """Strict JSON Schema for the two narrator-story generation stages."""
     string = {"type": "string"}
+
     def array(item: dict) -> dict:
         return {"type": "array", "items": item}
+
     def obj(properties: dict) -> dict:
         return {"type": "object", "properties": properties,
                 "required": list(properties), "additionalProperties": False}
@@ -169,7 +232,6 @@ def _to_gemini_schema(schema: dict) -> dict:
             result[key] = _to_gemini_schema(value)
         elif key in {"enum", "required", "description", "format", "nullable"}:
             result[key] = value
-        # Gemini's schema endpoint does not need JSON Schema's additionalProperties.
     return result
 
 
@@ -333,7 +395,7 @@ def provider_call(provider: dict, model: str, system: str, user: str) -> str:
                 raise
         except Exception as exc:
             if not getattr(exc, "raw_model_response", None):
-                status, body = _error_details(exc)
+                status, body, _ = _error_details(exc)
                 _write_debug_response(stage, provider_name, body or _safe(exc))
                 setattr(exc, "debug_response_saved", True)
             raise
@@ -348,8 +410,9 @@ def provider_call(provider: dict, model: str, system: str, user: str) -> str:
     from openai import OpenAI
     with OpenAI(base_url=provider["base_url"], api_key=os.environ[provider["env_key"]],
                 timeout=timeout, max_retries=0) as client:
-        kwargs = dict(model=model, messages=[{"role": "system", "content": system},
-                      {"role": "user", "content": user}], temperature=0.8)
+        kwargs = dict(model=model, messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}], temperature=0.8)
         is_groq_gpt_oss = provider_name == "groq" and model in {
             "openai/gpt-oss-120b", "openai/gpt-oss-20b"}
         schema = _json_schema_for_stage(stage)
@@ -360,6 +423,8 @@ def provider_call(provider: dict, model: str, system: str, user: str) -> str:
             stage_token_limits = {
                 "outline": 2200, "chapter": 3000, "chapter_extend": 2200,
                 "claim_review": 1800, "suggest_topics": 1200,
+                "source_analysis": 1800, "draft_episode": 3000,
+                "story_critic": 1800, "revise_episode": 3000,
             }
             kwargs["max_completion_tokens"] = stage_token_limits.get(stage, 1600)
             kwargs["reasoning_effort"] = "low"
@@ -376,7 +441,7 @@ def provider_call(provider: dict, model: str, system: str, user: str) -> str:
         try:
             response = client.chat.completions.create(**kwargs)
         except Exception as exc:
-            status, body = _error_details(exc)
+            status, body, retryable = _error_details(exc)
             message = (_safe(exc) + " " + body).lower()
             json_validation_failed = is_groq_gpt_oss and status == 400 and (
                 "json_validate_failed" in message or "failed_generation" in message)
@@ -403,7 +468,15 @@ def provider_call(provider: dict, model: str, system: str, user: str) -> str:
 
 
 class JsonLLM:
-    """Try configured providers in order and capture bounded diagnostics on failures."""
+    """Try configured providers in order and capture bounded diagnostics on failures.
+
+    Provider-level HTTP retries (429, 5xx) use exponential backoff with jitter
+    and respect the provider's stated retry-after delay. A single targeted
+    schema-repair prompt is allowed per provider/model when validation fails.
+    Provider retries are tracked separately from editorial revision attempts:
+    a rate limit or malformed response never counts as a storytelling revision.
+    """
+
     def __init__(self, call: Callable = provider_call, sleep: Callable = time.sleep,
                  providers: list[dict] | None = None, min_interval: float = 10.0,
                  cache_dir: Path | None = None, draft_cache_dir: Path | None = None):
@@ -427,10 +500,12 @@ class JsonLLM:
                 log.warning("Ignoring invalid cached model response")
         eligible = [p for p in self.providers if os.getenv(p["env_key"])]
         if not eligible:
-            raise RuntimeError("No script API key: set GROQ_API_KEY, GEMINI_API_KEY or OPENROUTER_API_KEY")
+            raise StageError("unknown", "No script API key: set GROQ_API_KEY, GEMINI_API_KEY or OPENROUTER_API_KEY",
+                             retryable=False)
         stage = str(prompt.get("task", "unknown")) if isinstance(prompt, dict) else "unknown"
-        errors: list[str] = []
         deadline = time.monotonic() + float(config.PROVIDER_TOTAL_BUDGET_SECONDS)
+
+        provider_errors: list[str] = []
         for provider in eligible:
             models = list(provider["models"])
             if provider.get("name") == "groq" and len(models) > 1:
@@ -439,64 +514,126 @@ class JsonLLM:
                 self.groq_stage_counter += 1
             for model in models:
                 if time.monotonic() >= deadline:
-                    raise RuntimeError("LLM stage exceeded its configured time budget")
-                correction = ""
-                corrected_prompt = False
-                attempts = 0
-                while attempts <= int(config.MAX_RETRIES_PER_MODEL):
+                    raise StageError(stage, "LLM stage exceeded its configured time budget",
+                                     provider=provider["name"], model=model, retryable=False)
+                provider_name = str(provider.get("name", "provider"))
+
+                # --- Provider-level HTTP retries with exponential backoff ---
+                provider_attempt = 0
+                while True:
                     if time.monotonic() >= deadline:
-                        raise RuntimeError("LLM stage exceeded its configured time budget")
-                    if provider.get("name") == "groq" and self.last_groq_call is not None and self.min_interval:
+                        raise StageError(stage, "LLM stage exceeded its configured time budget",
+                                         provider=provider_name, model=model, retryable=False)
+                    if provider_name == "groq" and self.last_groq_call is not None and self.min_interval:
                         wait_for = self.min_interval - (time.monotonic() - self.last_groq_call)
                         if wait_for > 0:
-                            self.sleep(min(wait_for, max(0, deadline - time.monotonic())))
+                            self.sleep(min(wait_for, max(0.0, deadline - time.monotonic())))
                     self.last_call = time.monotonic()
-                    if provider.get("name") == "groq":
+                    if provider_name == "groq":
                         self.last_groq_call = self.last_call
                     raw_attempt: Any = None
                     try:
                         raw_attempt = self.call(
                             provider, model, system,
-                            json.dumps(prompt, ensure_ascii=False) + correction)
+                            json.dumps(prompt, ensure_ascii=False))
                         data = extract_json(raw_attempt)
                         result = validate(data)
                         if cache:
                             write_json(cache, data)
                         return result
+                    except StageError:
+                        raise
+                    except ProviderHTTPError as exc:
+                        if not exc.retryable:
+                            # Non-retryable HTTP (400/401/403/404) -> raise immediately.
+                            # Do not spend quota on other providers; the request
+                            # itself must be fixed.
+                            raise StageError(stage,
+                                             f"Non-retryable HTTP {exc.status_code} from {provider_name}/{model}",
+                                             provider=provider_name, model=model,
+                                             status=exc.status_code,
+                                             body=exc.response_body, retryable=False)
+                        # Retryable HTTP (429/5xx) -> fall through to retry logic below.
+                        provider_attempt += 1
+                        if provider_attempt > MAX_PROVIDER_RETRIES:
+                            provider_errors.append(
+                                f"{provider_name}/{model}: HTTP {exc.status_code} persisted after "
+                                f"{MAX_PROVIDER_RETRIES} retries")
+                            break
+                        stated = _retry_after_seconds(exc.response_body or "")
+                        delay = _exponential_backoff(provider_attempt - 1, stated_delay=stated)
+                        delay = min(float(delay), max(0.0, deadline - time.monotonic()))
+                        if delay <= 0:
+                            provider_errors.append(
+                                f"{provider_name}/{model}: HTTP {exc.status_code} time budget exhausted")
+                            break
+                        log.info("%s/%s returned retryable HTTP %s; retrying in %.1fs",
+                                 provider_name, model, exc.status_code, delay)
+                        self.sleep(delay)
+                        continue
                     except Exception as exc:
-                        status, body = _log_failure(provider["name"], model, exc)
+                        status, body, retryable = _error_details(exc)
                         raw_debug = getattr(exc, "raw_model_response", None)
                         if not raw_debug:
                             raw_debug = raw_attempt if raw_attempt is not None else (body or _safe(exc))
                         if not getattr(exc, "debug_response_saved", False):
-                            _write_debug_response(stage, provider["name"], raw_debug)
-                        errors.append(f"{provider['name']}/{model}: {type(exc).__name__} HTTP {status}")
-                        if status in {400, 401, 403, 404}:
-                            raise ProviderHTTPError(
-                                status, body,
-                                f"Non-retryable HTTP {status} from {provider['name']}/{model}; All script providers failed fast") from exc
-                        # Schema/JSON validation gets one prompt correction, not an API retry.
+                            _write_debug_response(stage, provider_name, raw_debug)
+
+                        # Schema / JSON validation: one targeted repair attempt.
+                        # Validation failures are NOT provider retries and never
+                        # consume editorial revision attempts.
                         if isinstance(exc, (ValueError, KeyError, TypeError)) and status is None:
-                            if not corrected_prompt:
-                                correction = "\nReturn only a valid JSON object matching the requested schema. Correct the prior response."
-                                corrected_prompt = True
-                                continue
-                            break
-                        if status not in (429, 500, 502, 503, 504):
-                            break
-                        if attempts >= int(config.MAX_RETRIES_PER_MODEL):
-                            break
-                        if status == 429:
-                            stated_delay = _retry_after_seconds(body + " " + _safe(exc))
-                            delay = stated_delay if stated_delay is not None else min(2.0, 1.0 + random.uniform(0, 0.2))
-                        else:
-                            delay = min(2.0, 0.5 * (attempts + 1) + random.uniform(0, 0.2))
-                        delay = min(float(delay), max(0.0, deadline - time.monotonic()))
-                        if delay <= 0:
-                            break
-                        self.sleep(delay)
-                        attempts += 1
-        raise RuntimeError("All script providers failed: " + "; ".join(errors))
+                            reason = str(exc).strip() or type(exc).__name__
+                            correction = (
+                                "\nThe previous response failed validation: "
+                                + reason[:300]
+                                + ". Return only a valid JSON object matching the requested schema, "
+                                + "addressing that specific failure. No markdown."
+                            )
+                            try:
+                                repaired = self.call(
+                                    provider, model, system,
+                                    json.dumps(prompt, ensure_ascii=False) + correction)
+                                data = extract_json(repaired)
+                                result = validate(data)
+                                if cache:
+                                    write_json(cache, data)
+                                log.info("%s/%s: schema repair succeeded for stage %s",
+                                         provider_name, model, stage)
+                                return result
+                            except Exception as repair_exc:
+                                provider_errors.append(
+                                    f"{provider_name}/{model}: schema validation failed "
+                                    f"({reason}); repair attempt failed: {type(repair_exc).__name__}")
+                                break
+
+                        # Retryable provider HTTP (429/5xx): exponential backoff.
+                        if retryable and status in {429, 500, 502, 503, 504}:
+                            provider_attempt += 1
+                            if provider_attempt > MAX_PROVIDER_RETRIES:
+                                provider_errors.append(
+                                    f"{provider_name}/{model}: HTTP {status} persisted after "
+                                    f"{MAX_PROVIDER_RETRIES} retries")
+                                break
+                            stated = _retry_after_seconds(body + " " + _safe(exc))
+                            delay = _exponential_backoff(provider_attempt - 1, stated_delay=stated)
+                            delay = min(float(delay), max(0.0, deadline - time.monotonic()))
+                            if delay <= 0:
+                                provider_errors.append(
+                                    f"{provider_name}/{model}: HTTP {status} time budget exhausted")
+                                break
+                            log.info("%s/%s returned retryable HTTP %s; retrying in %.1fs",
+                                     provider_name, model, status, delay)
+                            self.sleep(delay)
+                            continue
+
+                        # Non-retryable or unknown failure -> try next model/provider.
+                        provider_errors.append(
+                            f"{provider_name}/{model}: {type(exc).__name__} HTTP {status}")
+                        break
+
+        raise StageError(stage, "All script providers failed: " + "; ".join(provider_errors),
+                         retryable=False)
 
 
 class DryRunLLM:
@@ -571,6 +708,78 @@ class DryRunLLM:
                 {"topic": f"Offline sample topic {index}", "research_question": "Which primary sources support this topic?"}
                 for index in range(1, count + 1)
             ]}
+        elif task == "source_analysis":
+            raw = {
+                "title": f"Source analysis of {str(prompt.get('story', {}).get('title', 'the tale'))}",
+                "central_conflict": "A central want meets an obstacle that forces a consequential choice.",
+                "characters": [{
+                    "id": "hero", "name": "The Heroine", "role": "protagonist",
+                    "motivation": "To keep a promise and reach safety.",
+                    "stakes": "Her promise and her safety.",
+                    "visual_identity": "A determined young woman in a green cloak.",
+                }, {
+                    "id": "guide", "name": "The Old Guide", "role": "mentor",
+                    "motivation": "To warn and help the heroine without taking her choice away.",
+                    "stakes": "Whether his warning is heeded.",
+                    "visual_identity": "An elderly traveller with a grey beard, coat and staff.",
+                }],
+                "key_reversals": ["The promised path is blocked", "A hidden way is discovered"],
+                "climax": "The heroine chooses the hidden way and crosses the danger.",
+                "resolution": "She reaches safety and keeps her promise.",
+                "tone": "Quiet, suspenseful, folkloric.",
+                "essential_beats": ["Departure", "The warning", "The blockage", "The crossing", "The return"],
+            }
+        elif task == "draft_episode":
+            story = prompt.get("story", {})
+            beats = story.get("ordered_key_beats", []) or ["The tale begins", "A choice is made", "The resolution"]
+            scenes = []
+            for index, beat in enumerate(beats, 1):
+                scenes.append({
+                    "id": f"beat-{index:02d}",
+                    "title": f"Beat {index}: {beat[:30]}",
+                    "narration": f"{beat}. The storyteller lets this moment land before moving on.",
+                    "visual_prompt": f"Cinematic painterly illustration of {beat}, dark fairy-tale storybook style.",
+                    "character_ids": ["hero", "guide"] if index in (2, len(beats)) else ["hero"],
+                    "source_beat": beat,
+                })
+            raw = {
+                "title": f"Retelling of {story.get('title', 'the tale')}",
+                "logline": "A compact dramatic retelling that follows the source beats.",
+                "characters": [
+                    {"id": "hero", "name": "The Heroine", "role": "protagonist",
+                     "visual_identity": "A determined young woman in a green cloak."},
+                    {"id": "guide", "name": "The Old Guide", "role": "mentor",
+                     "visual_identity": "An elderly traveller with a grey beard, coat and staff."},
+                ],
+                "scenes": scenes,
+            }
+        elif task == "story_critic":
+            criteria = ("hook", "clarity", "motivation", "stakes", "pacing", "dialogue",
+                        "emotional", "accuracy", "omissions", "payoff")
+            raw = {
+                "verdict": "pass", "reasons": [],
+                "assessment": {
+                    c: {"verdict": "strong",
+                        "comment": f"The draft handles {c} adequately."}
+                    for c in criteria
+                },
+                "revision_instructions": [],
+            }
+        elif task == "revise_episode":
+            raw = {
+                "title": f"Revised retelling of {str(prompt.get('story', {}).get('title', 'the tale'))}",
+                "logline": "A compact dramatic retelling that follows the source beats.",
+                "characters": [
+                    {"id": "hero", "name": "The Heroine", "role": "protagonist",
+                     "visual_identity": "A determined young woman in a green cloak."},
+                    {"id": "guide", "name": "The Old Guide", "role": "mentor",
+                     "visual_identity": "An elderly traveller with a grey beard, coat and staff."},
+                ],
+                "scenes": [{"id": f"scene-{i:02d}", "title": f"Scene {i}",
+                            "narration": "Revised narration for a source beat that lands with the listener.",
+                            "visual_prompt": "Cinematic painterly illustration, dark fairy-tale storybook style.",
+                            "character_ids": ["hero"], "source_beat": "a beat"} for i in range(1, 4)],
+            }
         else:
             raise ValueError(f"Dry-run has no canned reply for stage: {task}")
         return validate(raw)
