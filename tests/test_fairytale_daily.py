@@ -156,6 +156,56 @@ class DailyFairytaleRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "outside the repository root"):
                 self._run_with_mocks(root, output_root=outside)
 
+    # --- Diagnostic artifacts on rejection ---
+
+    def test_editorial_rejection_saves_diagnostic_package(self):
+        """When a story fails editorial review, a diagnostic package is saved
+        in the review directory and rotation state is NOT advanced."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue_story = sample_story()
+            (root / "fairytale_queue.json").write_text(json.dumps({
+                "schema_version": 1, "stories": [queue_story] + [sample_story(f"filler-{i}") for i in range(1, 8)]
+            }), encoding="utf-8")
+            plan = sample_plan(queue_story)
+            # Build an EditorialRejectionError with diagnostics
+            from fairytale_planner import EditorialRejectionError
+            exc = EditorialRejectionError(
+                "Story failed editorial review",
+                story=queue_story,
+                source_analysis={"central_conflict": "test", "resolution": "test"},
+                draft=plan,
+                assessments=[{"verdict": "reject", "reasons": ["Weak hook"],
+                              "assessment": {}, "accuracy_uncertainty": "unsupported"}],
+                revision_history=[],
+            )
+            with patch.object(fairytale_daily, "ROOT", root), \
+                 patch.object(fairytale_daily, "JsonLLM", return_value=Mock()), \
+                 patch.object(fairytale_daily, "generate_episode", side_effect=exc):
+                with self.assertRaises(RuntimeError):
+                    fairytale_daily.run(
+                        root / "fairytale_queue.json",
+                        root / "state" / "fairytale_rotation.json",
+                        root / "output",
+                        env={
+                            "CLOUDFLARE_ACCOUNT_ID": "test-account",
+                            "CLOUDFLARE_API_TOKEN": "test-token",
+                            "GROQ_API_KEY": "test-key",
+                            "EPISODE_DATE": "2026-11-14",
+                            "GITHUB_RUN_ID": "12345",
+                            "GITHUB_RUN_ATTEMPT": "1",
+                        },
+                    )
+            # Diagnostic package should exist
+            diag_path = root / "output" / f"2026-11-14-{queue_story['id']}-run-12345-1" / "review" / "diagnostic-package.json"
+            self.assertTrue(diag_path.is_file(), "Diagnostic package should be saved on rejection")
+            diag = json.loads(diag_path.read_text())
+            self.assertEqual(diag["failure_type"], "editorial")
+            self.assertEqual(diag["story_id"], queue_story["id"])
+            # Rotation state should NOT exist (story not marked complete)
+            state_path = root / "state" / "fairytale_rotation.json"
+            self.assertFalse(state_path.exists(), "Rotation state should not advance after rejection")
+
 
 if __name__ == "__main__":
     unittest.main()

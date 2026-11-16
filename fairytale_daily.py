@@ -19,9 +19,10 @@ if str(ROOT) not in sys.path:
 sys.path.insert(0, str(ROOT / "destination-prototype"))
 
 from fairytale_planner import (
+    EditorialRejectionError,
     generate_episode, initial_state, load_queue, next_story, record_success,
 )
-from llm import JsonLLM
+from llm import JsonLLM, StageError
 from story_store import write_json
 from generate_fairytale_scenes import run as generate_scenes
 from render_fairytale_video import render
@@ -56,6 +57,67 @@ def _repository_relative(path: Path) -> str:
         ) from exc
 
 
+def _collect_editorial_diagnostics(selected: dict, draft: dict | None,
+                                   source_analysis: dict | None = None,
+                                   assessments: list[dict] | None = None,
+                                   revision_history: list[dict] | None = None,
+                                   story: dict | None = None,
+                                   episode_key: str | None = None) -> dict:
+    """Collect the editorial diagnostic package for auditability.
+
+    Includes the selected story, source edition, source analysis, initial
+    draft, every critic assessment and its reasons, revision history, and
+    the final rejection explanation. No secrets are included.
+    """
+    story_obj = story or selected
+    return {
+        "episode_key": episode_key,
+        "story_id": story_obj.get("id"),
+        "story_title": story_obj.get("title"),
+        "source_edition": story_obj.get("source"),
+        "synopsis": story_obj.get("synopsis"),
+        "key_beats": story_obj.get("key_beats", []),
+        "source_analysis": source_analysis,
+        "initial_draft": draft,
+        "critic_assessments": assessments or [],
+        "revision_history": revision_history or [],
+        "final_rejection_explanation": (
+            assessments[-1].get("reasons", []) if assessments else []
+        ),
+    }
+
+
+def _save_diagnostic_package(episode_dir: Path, review_dir: Path,
+                             selected: dict, draft: dict | None,
+                             editorial_diagnostics: dict | None = None,
+                             provider_error: str | None = None,
+                             stage: str = "unknown") -> None:
+    """Persist a private diagnostic package so a failed or rejected episode
+    remains inspectable. Never includes API keys or secrets."""
+    review_dir.mkdir(parents=True, exist_ok=True)
+    diag = dict(editorial_diagnostics or {})
+    diag["failure_stage"] = stage
+    diag["failure_type"] = "provider_technical" if provider_error else "editorial"
+    diag["provider_error"] = provider_error
+    diag["selected_story"] = {
+        "id": selected.get("id"),
+        "title": selected.get("title"),
+        "source": selected.get("source"),
+    }
+    if draft:
+        diag["final_draft_title"] = draft.get("title")
+        diag["final_draft_narration_word_count"] = draft.get("narration_word_count")
+        diag["final_draft_scene_count"] = len(draft.get("scenes", []))
+    write_json(review_dir / "diagnostic-package.json", diag)
+    # Also save a machine-readable failure marker for the workflow.
+    write_json(review_dir / "failure-marker.json", {
+        "stage": stage,
+        "type": diag["failure_type"],
+        "provider_error": provider_error,
+        "story_id": selected.get("id"),
+    })
+
+
 def run(queue_path: Path, state_path: Path, output_root: Path,
         voice: str = "bm_fable", speed: float = 0.92,
         env: dict | None = None) -> dict:
@@ -85,6 +147,8 @@ def run(queue_path: Path, state_path: Path, output_root: Path,
     review_dir = episode_dir / "review"
 
     stage = "selection"
+    editorial_diagnostics: dict | None = None
+    provider_error: str | None = None
     try:
         llm = JsonLLM(
             cache_dir=ROOT / "work" / "fairytale-plan-cache",
@@ -153,10 +217,50 @@ def run(queue_path: Path, state_path: Path, output_root: Path,
             raise ValueError("SRT captions are missing or contain literal escaped newline text.")
         if not (review_dir / "contact-sheet.jpg").is_file():
             raise ValueError("Missing review contact sheet.")
-    except Exception as exc:
-        # Preserve every partial output (images, plan, captions) so a failed run
-        # remains inspectable. Only re-annotate the message with the failed stage;
-        # never include provider secrets.
+    except StageError as exc:
+        # Provider / technical failure: never an editorial revision. Preserve
+        # every diagnostic artifact and report the failed stage without secrets.
+        provider_error = (
+            f"Provider {exc.provider or 'unknown'}"
+            + (f" model {exc.model}" if exc.model else "")
+            + (f": HTTP {exc.status}" if exc.status else "")
+            + f" — {exc}"
+        )
+        _save_diagnostic_package(
+            episode_dir, review_dir, selected, plan if 'plan' in locals() else None,
+            editorial_diagnostics, provider_error=provider_error, stage=exc.stage,
+        )
+        message = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else type(exc).__name__
+        raise RuntimeError(f"fairytale pipeline failed at stage '{exc.stage}' (provider/technical): {message}") from exc
+    except EditorialRejectionError as exc:
+        # Editorial rejection: preserve the full diagnostic package (source
+        # analysis, draft, every critic assessment, revision history) so the
+        # rejection can be audited. Do not mark the story complete.
+        editorial_diagnostics = _collect_editorial_diagnostics(
+            selected, exc.draft, exc.source_analysis, exc.assessments,
+            exc.revision_history, exc.story, episode_key,
+        )
+        _save_diagnostic_package(
+            episode_dir, review_dir, selected, exc.draft, editorial_diagnostics,
+            provider_error=provider_error,
+        )
+        raise RuntimeError(
+            f"fairytale pipeline failed at stage '{stage}' (editorial rejection): {exc}"
+        ) from exc
+    except ValueError as exc:
+        # Could be a QA gate failure or other editorial issue. Preserve
+        # diagnostics; do not mark the story complete.
+        if editorial_diagnostics is None:
+            editorial_diagnostics = _collect_editorial_diagnostics(
+                selected, plan if 'plan' in locals() else None,
+                episode_key=episode_key,
+            )
+        _save_diagnostic_package(
+            episode_dir, review_dir, selected,
+            plan if 'plan' in locals() else None,
+            editorial_diagnostics,
+            provider_error=provider_error,
+        )
         message = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else type(exc).__name__
         raise RuntimeError(f"fairytale pipeline failed at stage '{stage}': {message}") from exc
 

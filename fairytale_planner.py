@@ -62,6 +62,17 @@ Assess the drafted fairy-tale retelling against these criteria, giving specific 
 the text: hook strength, narrative clarity, character motivation, stakes and tension, pacing
 and escalation, dialogue quality, emotional engagement, accuracy to the cited source, whether
 important source events have been omitted, and whether the ending delivers a proper payoff.
+
+ACCURACY RULE (read carefully):
+- Judge accuracy ONLY against the supplied source edition's synopsis and ordered key beats.
+- Do NOT import plot points from film adaptations, other editions, or your own memory of the tale.
+- If the supplied source edition explicitly names an event (for example "the horse's head reveals the betrayal"), then that event IS accurate to this edition, even if other editions differ.
+- Distinguish genuine source contradictions from legitimate variants across editions.
+- Identify the specific source event (synopsis sentence or key beat) that supports each accuracy objection.
+- Do not invent events or magical objects absent from the selected edition.
+- Separate factual accuracy from creative storytelling preferences: a scene you would write differently is not "inaccurate" if it follows the supplied source.
+- If the supplied source does not give enough detail to confirm or deny a detail, return accuracy verdict "uncertain" with uncertainty status "unsupported" instead of "inaccurate".
+
 A story must not pass merely because its JSON is valid. If it fails, return verdict "reject"
 with concrete reasons and actionable revision instructions. If it passes, return verdict "pass"
 with a brief justification. Return one valid JSON object only.
@@ -264,8 +275,15 @@ def validate_episode_plan(raw: dict, story: dict | None = None) -> dict:
     }
 
 
-def validate_critic_assessment(raw: dict) -> dict:
-    """Validate the independent critic's structured assessment."""
+def validate_critic_assessment(raw: dict, source_synopsis: str | None = None,
+                               source_beats: list[str] | None = None) -> dict:
+    """Validate the independent critic's structured assessment.
+
+    Accuracy objections must reference specific source events. An accuracy
+    verdict of "inaccurate" with uncertainty "supported" requires a concrete
+    source citation; otherwise the assessment is flagged as unsupported and
+    cannot by itself justify rejection.
+    """
     if not isinstance(raw, dict):
         raise ValueError("Critic assessment must be a JSON object")
     verdict = _text(raw.get("verdict"), "critic verdict", 20)
@@ -291,6 +309,24 @@ def validate_critic_assessment(raw: dict) -> dict:
             "verdict": str(value.get("verdict", "weak"))[:20],
             "comment": _text(value.get("comment", ""), f"assessment.{criterion} comment", 800),
         }
+    accuracy = clean_assessment.get("accuracy", {})
+    accuracy_uncertainty = str(assessment.get("accuracy_uncertainty", "unsupported")).strip()
+    if accuracy_uncertainty not in {"supported", "unsupported"}:
+        accuracy_uncertainty = "unsupported"
+
+    # Source-grounded accuracy enforcement: an accuracy objection of "inaccurate"
+    # is only valid if the source edition actually contradicts the draft. If the
+    # critic claims inaccuracy but marks the claim as unsupported, that objection
+    # is stripped from the rejection reasons so a story is not rejected on a
+    # factual claim the source does not support.
+    if accuracy["verdict"] == "inaccurate" and accuracy_uncertainty == "unsupported":
+        accuracy["verdict"] = "uncertain"
+        accuracy["comment"] = (
+            "The critic flagged a possible accuracy issue but the supplied source "
+            "edition does not provide enough detail to confirm or deny it. "
+            "Original comment: " + accuracy["comment"][:400]
+        )
+
     revision_instructions = raw.get("revision_instructions", [])
     if not isinstance(revision_instructions, list):
         raise ValueError("Critic revision instructions must be a list")
@@ -302,6 +338,7 @@ def validate_critic_assessment(raw: dict) -> dict:
         "reasons": clean_reasons,
         "assessment": clean_assessment,
         "revision_instructions": clean_instructions,
+        "accuracy_uncertainty": accuracy_uncertainty,
     }
 
 
@@ -376,8 +413,10 @@ def critic_review(draft_plan: dict, story: dict, llm) -> dict:
 
     The critic did not write the draft. It returns a structured pass/reject assessment with
     specific reasons and actionable revision instructions. A story must not pass merely
-    because its JSON is valid.
+    because its JSON is valid. Accuracy objections are verified against the supplied source
+    edition's synopsis and key beats; unsupported factual claims do not justify rejection.
     """
+    source = story.get("source", {})
     prompt = {
         "task": "story_critic",
         "story": {
@@ -394,6 +433,12 @@ def critic_review(draft_plan: dict, story: dict, llm) -> dict:
                 for s in draft_plan.get("scenes", [])
             ],
         },
+        "source_edition": {
+            "title": source.get("title"),
+            "author": source.get("author"),
+            "synopsis": story.get("synopsis"),
+            "ordered_key_beats": story.get("key_beats", []),
+        },
         "schema": {
             "verdict": "'pass' or 'reject'",
             "reasons": ["specific reasons for rejection, empty when passing"],
@@ -405,7 +450,8 @@ def critic_review(draft_plan: dict, story: dict, llm) -> dict:
                 "pacing": {"verdict": "well-paced/rushed/dragged", "comment": "evidence"},
                 "dialogue": {"verdict": "natural/stilted", "comment": "evidence"},
                 "emotional": {"verdict": "engaging/flat", "comment": "evidence"},
-                "accuracy": {"verdict": "accurate/inaccurate", "comment": "evidence"},
+                "accuracy": {"verdict": "accurate/inaccurate/uncertain", "comment": "evidence from the supplied source edition only"},
+                "accuracy_uncertainty": "supported/unsupported - set to 'unsupported' when the source edition does not provide enough detail to confirm or deny the detail",
                 "omissions": {"verdict": "none/missing", "comment": "evidence"},
                 "payoff": {"verdict": "satisfying/weak", "comment": "evidence"},
             },
@@ -458,6 +504,10 @@ def generate_episode(story: dict, llm) -> dict:
     Stages: source analysis -> draft -> critic review -> (optional revise -> re-review).
     Image generation must not begin until the story passes the critic.
 
+    Provider failures (StageError) are raised immediately and never count as
+    editorial revision attempts. Only actual critic "reject" verdicts consume
+    the bounded revision budget.
+
     The returned plan carries the full editorial provenance so that downstream
     QA can audit that this exact draft was independently approved before any
     image was generated.
@@ -466,13 +516,26 @@ def generate_episode(story: dict, llm) -> dict:
     source_analysis = analyze_source(story, llm)
     draft = draft_episode(story, source_analysis, llm)
     assessment = critic_review(draft, story, llm)
+    # Validate the critic assessment with source grounding so unsupported
+    # factual claims cannot by themselves justify rejection.
+    assessment = validate_critic_assessment(
+        assessment,
+        source_synopsis=story.get("synopsis"),
+        source_beats=story.get("key_beats", []),
+    )
     revision_history = []
     revisions = 0
+    assessments = [assessment]
     while assessment["verdict"] == "reject":
         if revisions >= max_revisions:
-            raise ValueError(
+            raise EditorialRejectionError(
                 f"Story '{story['title']}' failed editorial review after {max_revisions} "
-                f"revision attempts: {'; '.join(assessment['reasons'])}"
+                f"revision attempts: {'; '.join(assessment['reasons'])}",
+                story=story,
+                source_analysis=source_analysis,
+                draft=draft,
+                assessments=assessments,
+                revision_history=revision_history,
             )
         revision_history.append({
             "revision_number": revisions + 1,
@@ -481,6 +544,12 @@ def generate_episode(story: dict, llm) -> dict:
         })
         draft = revise_episode(draft, assessment, story, llm)
         assessment = critic_review(draft, story, llm)
+        assessment = validate_critic_assessment(
+            assessment,
+            source_synopsis=story.get("synopsis"),
+            source_beats=story.get("key_beats", []),
+        )
+        assessments.append(assessment)
         revisions += 1
     if assessment["verdict"] != "pass":
         raise ValueError(f"Story '{story['title']}' did not pass editorial review")
@@ -509,6 +578,21 @@ def generate_episode(story: dict, llm) -> dict:
         "gate_passed_at": now,
     }
     return draft
+
+
+class EditorialRejectionError(ValueError):
+    """Raised when a story fails editorial review after the bounded revision
+    budget. Carries the full diagnostic package for the rejected episode."""
+
+    def __init__(self, message: str, *, story: dict, source_analysis: dict | None,
+                 draft: dict | None, assessments: list[dict],
+                 revision_history: list[dict]):
+        super().__init__(message)
+        self.story = story
+        self.source_analysis = source_analysis
+        self.draft = draft
+        self.assessments = assessments
+        self.revision_history = revision_history
 
 
 def record_success(state: dict, story: dict, episode_date: str, run_id: str) -> dict:

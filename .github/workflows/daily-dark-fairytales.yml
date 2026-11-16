@@ -162,6 +162,18 @@ jobs:
             --voice "$VOICE" \
             --speed "$SPEED"
 
+      - name: Classify failure type for diagnostics
+        if: failure()
+        run: |
+          MARKER="output/daily-fairytales/*/review/failure-marker.json"
+          if [ -f "$MARKER" ]; then
+            echo "::group::Failure classification"
+            cat "$MARKER"
+            echo "::endgroup::"
+          else
+            echo "No failure marker found; pipeline may have failed before episode dir was created."
+          fi
+
       - name: Save rotation state only after a successful complete render
         if: success()
         uses: actions/cache/save@v4
@@ -176,6 +188,7 @@ jobs:
           name: dark-fairytale-review-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             output/daily-fairytales/**
+            debug/**
             state/fairytale_rotation.json
           if-no-files-found: warn
           retention-days: 14

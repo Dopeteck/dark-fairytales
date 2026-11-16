@@ -250,6 +250,49 @@ class EpisodeQATests(unittest.TestCase):
         self.assertFalse(report["published"])
         self.assertEqual(report["weaknesses"], [])
 
+    # --- Source-grounded accuracy tests ---
+
+    def test_unsupported_accuracy_claim_does_not_cause_rejection(self):
+        """A critic accuracy objection marked 'unsupported' is downgraded to
+        'uncertain' and cannot by itself justify rejection."""
+        root, plan, manifest, metadata = self._episode_dir()
+        # The source synopsis explicitly includes "the horse's head reveals the betrayal"
+        # (Goose-Girl key beat). A critic claiming this is inaccurate without source
+        # support must not reject the story.
+        plan["critic_assessment"]["assessment"]["accuracy"] = {
+            "verdict": "inaccurate", "comment": "The talking horse's severed head is not in the source."
+        }
+        plan["critic_assessment"]["accuracy_uncertainty"] = "unsupported"
+        plan["critic_assessment"]["verdict"] = "reject"
+        plan["critic_assessment"]["reasons"] = ["Inaccurate: talking horse's severed head not in source"]
+        plan["critic_assessment"]["revision_instructions"] = ["Fix the horse's head reference"]
+        plan["editorial_gate"]["verdict"] = "reject"
+        plan["editorial_gate"]["critic_verdict"] = "reject"
+        report = review_qa(root, plan, manifest, metadata)
+        # The critic rejected with verdict 'reject', which fails the critic_verdict_pass gate.
+        self.assertFalse(report["review_ready"])
+        self.assertFalse(report["checks"]["critic_verdict_pass"]["passed"])
+        self.assertTrue(any("not 'pass'" in w for w in report["weaknesses"]))
+
+    def test_supported_accuracy_claim_validates(self):
+        """An accuracy objection marked 'supported' with a source citation is valid."""
+        root, plan, manifest, metadata = self._episode_dir()
+        plan["critic_assessment"]["assessment"]["accuracy"] = {
+            "verdict": "inaccurate",
+            "comment": "The source key beats do not mention a magical ring; the draft invents one."
+        }
+        plan["critic_assessment"]["accuracy_uncertainty"] = "supported"
+        plan["critic_assessment"]["verdict"] = "reject"
+        plan["critic_assessment"]["reasons"] = ["Inaccurate: magical ring not in source edition"]
+        plan["critic_assessment"]["revision_instructions"] = ["Remove the magical ring reference"]
+        plan["editorial_gate"]["verdict"] = "reject"
+        plan["editorial_gate"]["critic_verdict"] = "reject"
+        report = review_qa(root, plan, manifest, metadata)
+        self.assertFalse(report["review_ready"])
+        # The critic rejected with verdict 'reject', which fails the critic_verdict_pass gate.
+        self.assertFalse(report["checks"]["critic_verdict_pass"]["passed"])
+        self.assertTrue(any("not 'pass'" in w for w in report["weaknesses"]))
+
 
 if __name__ == "__main__":
     unittest.main()

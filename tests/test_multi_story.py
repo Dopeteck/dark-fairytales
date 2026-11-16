@@ -95,6 +95,71 @@ class MultiStoryEngineTests(unittest.TestCase):
         # the editorial QA unit tests which feed rejected/malformed assessments.
         self.assertTrue(True, "Contract covered by test_episode_qa editorial gates")
 
+    def test_provider_failure_does_not_consume_editorial_revision(self):
+        """A StageError from the LLM provider (e.g. rate limit) must not count
+        as an editorial revision attempt. Only critic 'reject' verdicts consume
+        the bounded revision budget."""
+        story = self.tales[0]
+
+        class FailingLLM:
+            """Fails on the first source_analysis call with a StageError,
+            then passes on subsequent calls."""
+            def __init__(self):
+                self.call_count = 0
+
+            def generate(self, system, prompt, validate):
+                task = str(prompt.get("task", ""))
+                self.call_count += 1
+                if task == "source_analysis" and self.call_count == 1:
+                    from llm import StageError
+                    raise StageError("source_analysis",
+                                     "Provider HTTP 429 rate limited",
+                                     provider="groq", model="test-model",
+                                     status=429, retryable=False)
+                # For all other tasks, return a valid pass
+                if task == "story_critic":
+                    criteria = ("hook", "clarity", "motivation", "stakes", "pacing",
+                                "dialogue", "emotional", "accuracy", "omissions", "payoff")
+                    return {
+                        "verdict": "pass",
+                        "reasons": [],
+                        "assessment": {c: {"verdict": "strong", "comment": "ok"} for c in criteria},
+                        "revision_instructions": [],
+                    }
+                if task == "draft_episode":
+                    beats = str(prompt.get("story", {}).get("ordered_key_beats", []))
+                    scenes = [{"id": f"scene-{i:02d}", "title": f"Scene {i}",
+                               "narration": f"Narration for beat {i} of {beats}.",
+                               "visual_prompt": f"Visual for scene {i}.",
+                               "character_ids": ["hero"], "source_beat": f"beat {i}"}
+                              for i in range(1, 4)]
+                    return {"title": "Test", "logline": "Test logline",
+                            "characters": [{"id": "hero", "name": "Hero", "role": "protagonist",
+                                            "visual_identity": "A hero."}],
+                            "scenes": scenes}
+                if task == "source_analysis":
+                    return {"central_conflict": "Test conflict", "resolution": "Test resolution",
+                            "characters": [], "key_reversals": [], "climax": "Test climax",
+                            "tone": "Test", "essential_beats": []}
+                if task == "revise_episode":
+                    return {"title": "Test Revised", "logline": "Test logline",
+                            "characters": [{"id": "hero", "name": "Hero", "role": "protagonist",
+                                            "visual_identity": "A hero."}],
+                            "scenes": [{"id": "scene-01", "title": "Scene 1",
+                                        "narration": "Revised narration.",
+                                        "visual_prompt": "Visual.", "character_ids": ["hero"],
+                                        "source_beat": "beat 1"}]}
+                raise ValueError(f"Unexpected task: {task}")
+
+        llm = FailingLLM()
+        # The StageError should propagate immediately without consuming
+        # any editorial revision attempts (revision_count stays 0).
+        with self.assertRaises(RuntimeError) as ctx:
+            generate_episode(story, llm)
+        self.assertIn("Provider HTTP 429", str(ctx.exception))
+        # The LLM should have been called only once (source_analysis failed)
+        self.assertEqual(llm.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
